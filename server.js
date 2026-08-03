@@ -21,7 +21,25 @@ const reportsRoutes = require("./routes/reports.routes");
 
 const app = express();
 
-app.use(cors("http://localhost:3000"));
+const allowedOrigins = [
+  "http://localhost:3000",
+  "https://ammar-autos-frontend.vercel.app",
+  "https://ammar-autos.vercel.app",
+];
+
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      // Allow requests with no origin (mobile apps, curl, Postman, etc.)
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error("Not allowed by CORS"));
+      }
+    },
+    credentials: true,
+  })
+);
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
@@ -43,6 +61,16 @@ app.use("/api/registration", registrationRoutes);
 app.use("/api/inventory", inventoryRoutes);
 app.use("/api/customer", customerRoutes);
 app.use("/api/reports", reportsRoutes);
+
+// Also handle requests without /api prefix (frontend compatibility)
+app.use("/auth", authRoutes);
+app.use("/purchase", purchaseRoutes);
+app.use("/sale", saleRoutes);
+app.use("/upload", uploadRoutes);
+app.use("/registration", registrationRoutes);
+app.use("/inventory", inventoryRoutes);
+app.use("/customer", customerRoutes);
+app.use("/reports", reportsRoutes);
 
 const PORT = process.env.PORT || 5000;
 
