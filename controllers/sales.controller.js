@@ -334,7 +334,9 @@ const createSale = async (req, res) => {
  */
 const getAllSales = async (req, res) => {
   try {
-    const { category, month, search } = req.query;
+    const { category, month, search, page: pageStr, limit: limitStr } = req.query;
+    const page = Math.max(1, parseInt(pageStr) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(limitStr) || 10));
     let collectionRef = db.collection("sales");
 
     if (category && SALE_CATEGORIES.includes(category)) {
@@ -370,10 +372,19 @@ const getAllSales = async (req, res) => {
       );
     }
 
+    const totalCount = sales.length;
+    const totalPages = Math.ceil(totalCount / limit) || 1;
+    const start = (page - 1) * limit;
+    const paged = sales.slice(start, start + limit);
+
     return res.status(200).json({
       success: true,
-      count: sales.length,
-      data: sales
+      count: paged.length,
+      totalCount,
+      page,
+      totalPages,
+      limit,
+      data: paged
     });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
@@ -381,26 +392,27 @@ const getAllSales = async (req, res) => {
 };
 
 /**
- * STATS: Bikes sold + revenue for a given month (defaults to current month).
+ * STATS: Bikes sold + revenue. Filters by month if provided, otherwise all-time.
  * GET /api/sale/stats?month=2026-07
- * "Revenue" = sum of totalSaleAmount for sales made within that month.
+ * "Revenue" = sum of totalSaleAmount for matching sales.
  */
 const getSaleStats = async (req, res) => {
   try {
     const { month } = req.query;
-    const now = new Date();
-    const [year, mon] = month && /^\d{4}-\d{2}$/.test(month)
-      ? month.split("-").map(Number)
-      : [now.getFullYear(), now.getMonth() + 1];
 
-    const start = new Date(year, mon - 1, 1);
-    const end = new Date(year, mon, 1);
-
-    const snapshot = await db
-      .collection("sales")
-      .where("saleDateTime", ">=", start)
-      .where("saleDateTime", "<", end)
-      .get();
+    let snapshot;
+    if (month && /^\d{4}-\d{2}$/.test(month)) {
+      const [year, mon] = month.split("-").map(Number);
+      const start = new Date(year, mon - 1, 1);
+      const end = new Date(year, mon, 1);
+      snapshot = await db
+        .collection("sales")
+        .where("saleDateTime", ">=", start)
+        .where("saleDateTime", "<", end)
+        .get();
+    } else {
+      snapshot = await db.collection("sales").get();
+    }
 
     let bikesSold = 0;
     let revenue = 0;
@@ -412,7 +424,7 @@ const getSaleStats = async (req, res) => {
 
     return res.status(200).json({
       success: true,
-      month: `${year}-${String(mon).padStart(2, "0")}`,
+      month: month || "all",
       bikesSold,
       revenue
     });
