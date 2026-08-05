@@ -50,6 +50,7 @@ const lookupBikeByChasis = async (req, res) => {
       found: true,
       alreadySold: false,
       purchaseId: purchaseDoc.id,
+      purchaseCategory: purchase.category || "local_customer",
       data: {
         bikeCompany: purchase.bikeCompany || "",
         bikeModel: purchase.bikeModel || "",
@@ -110,6 +111,7 @@ const lookupBikeByEngine = async (req, res) => {
       found: true,
       alreadySold: false,
       purchaseId: purchaseDoc.id,
+      purchaseCategory: purchase.category || "local_customer",
       data: {
         bikeCompany: purchase.bikeCompany || "",
         bikeModel: purchase.bikeModel || "",
@@ -488,7 +490,7 @@ const lookupBikeByRegistration = async (req, res) => {
       found: true,
       alreadySold: false,
       purchaseId: purchaseDoc.id,
-      // Fields to auto-fill on the Sale form:
+      purchaseCategory: purchase.category || "local_customer",
       data: {
         bikeCompany: purchase.bikeCompany || "",
         bikeModel: purchase.bikeModel || "",
@@ -496,9 +498,6 @@ const lookupBikeByRegistration = async (req, res) => {
         engineNo: purchase.engineNo || "",
         registrationNo: purchase.registrationNo || "",
         registrationStatus: purchase.registrationStatus || "registered",
-        // Reference-only info about where the bike came from — shown
-        // read-only on the Sale form, does not overwrite the sale's own
-        // saler (staff) fields.
         originalPurchase: {
           purchasedFrom: purchase.customerName || "",
           purchasedFromCnic: purchase.cnicNumber || "",

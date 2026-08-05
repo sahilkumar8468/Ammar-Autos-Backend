@@ -23,21 +23,30 @@ const app = express();
 
 const allowedOrigins = [
   "http://localhost:3000",
+  "http://localhost:3001",
+  "http://127.0.0.1:3000",
   "https://ammar-autos-frontend.vercel.app",
   "https://ammar-autos.vercel.app",
+  "https://ammar-autos-backend.vercel.app",
 ];
+
+// Helper: check if origin is from a Vercel preview deployment
+const isVercelPreview = (origin) =>
+  /^https:\/\/ammar-autos.*\.vercel\.app$/.test(origin);
 
 app.use(
   cors({
     origin: (origin, callback) => {
-      // Allow requests with no origin (mobile apps, curl, Postman, etc.)
-      if (!origin || allowedOrigins.includes(origin)) {
+      // Allow requests with no origin (mobile apps, curl, Postman, server-to-server, etc.)
+      if (!origin || allowedOrigins.includes(origin) || isVercelPreview(origin)) {
         callback(null, true);
       } else {
         callback(new Error("Not allowed by CORS"));
       }
     },
     credentials: true,
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
   })
 );
 app.use(express.json());
