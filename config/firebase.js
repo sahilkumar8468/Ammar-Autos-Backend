@@ -60,11 +60,21 @@ if (process.env.FIREBASE_SERVICE_ACCOUNT_BASE64) {
   }
 } else {
   // Fallback to local file for development
-  try {
-    const serviceAccount = require("./serviceAccountKey.json");
-    credential = cert(serviceAccount);
-  } catch (error) {
-    console.error("Firebase credentials not found. Please set environment variables or provide serviceAccountKey.json");
+  const fs = require("fs");
+  const path = require("path");
+  const path1 = path.join(__dirname, "serviceAccountKey.json");
+  const path2 = path.join(__dirname, "..", "serviceAccountKey.json");
+
+  if (fs.existsSync(path1)) {
+    credential = cert(require(path1));
+  } else if (fs.existsSync(path2)) {
+    credential = cert(require(path2));
+  } else {
+    console.error(
+      "❌ Firebase credentials not found.\n" +
+      "Please place your Firebase 'serviceAccountKey.json' file inside 'Backend/config/serviceAccountKey.json' (or 'Backend/serviceAccountKey.json'),\n" +
+      "or set FIREBASE_SERVICE_ACCOUNT_BASE64 in your Backend/.env file."
+    );
     process.exit(1);
   }
 }

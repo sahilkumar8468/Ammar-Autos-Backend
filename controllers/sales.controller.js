@@ -335,24 +335,10 @@ const createSale = async (req, res) => {
 const getAllSales = async (req, res) => {
   try {
     const { category, month, search, page: pageStr, limit: limitStr } = req.query;
-    const page = Math.max(1, parseInt(pageStr) || 1);
-    const limit = Math.min(100, Math.max(1, parseInt(limitStr) || 10));
     let collectionRef = db.collection("sales");
 
     if (category && SALE_CATEGORIES.includes(category)) {
       collectionRef = collectionRef.where("category", "==", category);
-    }
-
-    if (month && /^\d{4}-\d{2}$/.test(month)) {
-      const [year, mon] = month.split("-").map(Number);
-      const start = new Date(year, mon - 1, 1);
-      const end = new Date(year, mon, 1); // first day of next month, exclusive
-      collectionRef = collectionRef
-        .where("saleDateTime", ">=", start)
-        .where("saleDateTime", "<", end)
-        .orderBy("saleDateTime", "desc");
-    } else {
-      collectionRef = collectionRef.orderBy("createdAt", "desc");
     }
 
     const snapshot = await collectionRef.get();
@@ -362,28 +348,57 @@ const getAllSales = async (req, res) => {
       sales.push({ id: doc.id, ...doc.data() });
     });
 
+    // In-memory sort by saleDateTime or createdAt descending
+    sales.sort((a, b) => {
+      const getMs = (val) => {
+        if (!val) return 0;
+        if (typeof val === "object" && val.seconds != null) return val.seconds * 1000;
+        const d = new Date(val);
+        return isNaN(d.getTime()) ? 0 : d.getTime();
+      };
+      return (getMs(b.saleDateTime) || getMs(b.createdAt)) - (getMs(a.saleDateTime) || getMs(a.createdAt));
+    });
+
+    // In-memory filter by month ("YYYY-MM") if provided
+    if (month && /^\d{4}-\d{2}$/.test(month)) {
+      sales = sales.filter(sale => {
+        if (!sale.saleDateTime) return false;
+        const d = sale.saleDateTime?.seconds ? new Date(sale.saleDateTime.seconds * 1000) : new Date(sale.saleDateTime);
+        if (isNaN(d.getTime())) return false;
+        const m = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+        return m === month;
+      });
+    }
+
+    // In-memory filter by search query if provided
     if (search && search.trim()) {
       const term = search.trim().toLowerCase();
       sales = sales.filter(sale =>
         (sale.registrationNo || "").toLowerCase().includes(term) ||
         (sale.chasisNo || "").toLowerCase().includes(term) ||
         (sale.engineNo || "").toLowerCase().includes(term) ||
-        (sale.buyerCnic || "").toLowerCase().includes(term)
+        (sale.buyerCnic || "").toLowerCase().includes(term) ||
+        (sale.buyerName || "").toLowerCase().includes(term) ||
+        (sale.bikeCompany || "").toLowerCase().includes(term) ||
+        (sale.bikeModel || "").toLowerCase().includes(term)
       );
     }
 
     const totalCount = sales.length;
-    const totalPages = Math.ceil(totalCount / limit) || 1;
-    const start = (page - 1) * limit;
-    const paged = sales.slice(start, start + limit);
+
+    // Optional pagination: only paginate if page or limit query parameters are explicitly passed
+    let paged = sales;
+    if (pageStr || limitStr) {
+      const page = Math.max(1, parseInt(pageStr) || 1);
+      const limit = Math.min(500, Math.max(1, parseInt(limitStr) || 50));
+      const start = (page - 1) * limit;
+      paged = sales.slice(start, start + limit);
+    }
 
     return res.status(200).json({
       success: true,
       count: paged.length,
       totalCount,
-      page,
-      totalPages,
-      limit,
       data: paged
     });
   } catch (error) {
@@ -392,34 +407,45 @@ const getAllSales = async (req, res) => {
 };
 
 /**
- * STATS: Bikes sold + revenue. Filters by month if provided, otherwise all-time.
+ * STATS: Bikes sold + revenue for a given month (defaults to all/current month).
  * GET /api/sale/stats?month=2026-07
  * "Revenue" = sum of totalSaleAmount for matching sales.
  */
 const getSaleStats = async (req, res) => {
   try {
-    const { month } = req.query;
+    const { month, category } = req.query;
 
-    let snapshot;
-    if (month && /^\d{4}-\d{2}$/.test(month)) {
-      const [year, mon] = month.split("-").map(Number);
-      const start = new Date(year, mon - 1, 1);
-      const end = new Date(year, mon, 1);
-      snapshot = await db
-        .collection("sales")
-        .where("saleDateTime", ">=", start)
-        .where("saleDateTime", "<", end)
-        .get();
-    } else {
-      snapshot = await db.collection("sales").get();
+    let collectionRef = db.collection("sales");
+    if (category && SALE_CATEGORIES.includes(category)) {
+      collectionRef = collectionRef.where("category", "==", category);
     }
+
+    const snapshot = await collectionRef.get();
 
     let bikesSold = 0;
     let revenue = 0;
     snapshot.forEach(doc => {
       const sale = doc.data();
-      bikesSold += 1;
-      revenue += parseFloat(sale.totalSaleAmount || 0);
+      let matchMonth = true;
+
+      if (month && /^\d{4}-\d{2}$/.test(month)) {
+        if (!sale.saleDateTime) {
+          matchMonth = false;
+        } else {
+          const d = sale.saleDateTime?.seconds ? new Date(sale.saleDateTime.seconds * 1000) : new Date(sale.saleDateTime);
+          if (isNaN(d.getTime())) {
+            matchMonth = false;
+          } else {
+            const m = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+            if (m !== month) matchMonth = false;
+          }
+        }
+      }
+
+      if (matchMonth) {
+        bikesSold += 1;
+        revenue += parseFloat(sale.totalSaleAmount || 0);
+      }
     });
 
     return res.status(200).json({
