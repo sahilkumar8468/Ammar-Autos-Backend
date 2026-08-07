@@ -337,29 +337,33 @@ const getAllSales = async (req, res) => {
     const { category, month, search, page: pageStr, limit: limitStr } = req.query;
     const page = Math.max(1, parseInt(pageStr) || 1);
     const limit = Math.min(100, Math.max(1, parseInt(limitStr) || 10));
-    let collectionRef = db.collection("sales");
+    let query = db.collection("sales");
 
     if (category && SALE_CATEGORIES.includes(category)) {
-      collectionRef = collectionRef.where("category", "==", category);
+      query = query.where("category", "==", category);
     }
 
     if (month && /^\d{4}-\d{2}$/.test(month)) {
       const [year, mon] = month.split("-").map(Number);
       const start = new Date(year, mon - 1, 1);
       const end = new Date(year, mon, 1); // first day of next month, exclusive
-      collectionRef = collectionRef
+      query = query
         .where("saleDateTime", ">=", start)
-        .where("saleDateTime", "<", end)
-        .orderBy("saleDateTime", "desc");
-    } else {
-      collectionRef = collectionRef.orderBy("createdAt", "desc");
+        .where("saleDateTime", "<", end);
     }
 
-    const snapshot = await collectionRef.get();
+    const snapshot = await query.get();
 
     let sales = [];
     snapshot.forEach(doc => {
       sales.push({ id: doc.id, ...doc.data() });
+    });
+
+    // Sort in JS (newest first) to avoid Firestore composite-index issues
+    sales.sort((a, b) => {
+      const dateA = a.saleDateTime?.toDate?.() || new Date(a.saleDateTime || 0);
+      const dateB = b.saleDateTime?.toDate?.() || new Date(b.saleDateTime || 0);
+      return dateB - dateA;
     });
 
     if (search && search.trim()) {
