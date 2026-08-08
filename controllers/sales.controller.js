@@ -255,8 +255,9 @@ const createSale = async (req, res) => {
       installments = buildInstallmentSchedule(installmentStartDate, months, perMonth);
     }
 
-    const amountRemaining =
-      saleType === "installment" ? Math.max(total - advance, 0) : Math.max(total - advance, 0);
+    // For cash sales, everything is paid upfront — nothing remaining.
+    // For installment sales, remaining = total - advance.
+    const amountRemaining = saleType === "cash" ? 0 : Math.max(total - advance, 0);
 
     const saleData = {
       category,
@@ -562,11 +563,16 @@ const updateSale = async (req, res) => {
     if (updateData.totalSaleAmount !== undefined) updateData.totalSaleAmount = parseFloat(updateData.totalSaleAmount) || 0;
     if (updateData.advanceReceived !== undefined) updateData.advanceReceived = parseFloat(updateData.advanceReceived) || 0;
 
-    // Recalculate amountRemaining whenever totalSaleAmount or advanceReceived change
-    if (updateData.totalSaleAmount !== undefined || updateData.advanceReceived !== undefined) {
-      const total = updateData.totalSaleAmount !== undefined ? updateData.totalSaleAmount : (doc.data().totalSaleAmount || 0);
-      const advance = updateData.advanceReceived !== undefined ? updateData.advanceReceived : (doc.data().advanceReceived || 0);
-      updateData.amountRemaining = Math.max(total - advance, 0);
+    // Recalculate amountRemaining whenever totalSaleAmount, advanceReceived, or saleType change
+    if (updateData.totalSaleAmount !== undefined || updateData.advanceReceived !== undefined || updateData.saleType !== undefined) {
+      const saleType = updateData.saleType !== undefined ? updateData.saleType : (doc.data().saleType || "cash");
+      if (saleType === "cash") {
+        updateData.amountRemaining = 0;
+      } else {
+        const total = updateData.totalSaleAmount !== undefined ? updateData.totalSaleAmount : (doc.data().totalSaleAmount || 0);
+        const advance = updateData.advanceReceived !== undefined ? updateData.advanceReceived : (doc.data().advanceReceived || 0);
+        updateData.amountRemaining = Math.max(total - advance, 0);
+      }
     }
 
     // Clean up empty strings → null for fields that should be numbers/dates or null
