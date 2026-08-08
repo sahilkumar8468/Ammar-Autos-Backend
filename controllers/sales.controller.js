@@ -561,7 +561,31 @@ const updateSale = async (req, res) => {
 
     if (updateData.totalSaleAmount) updateData.totalSaleAmount = parseFloat(updateData.totalSaleAmount);
     if (updateData.advanceReceived) updateData.advanceReceived = parseFloat(updateData.advanceReceived);
-    if (updateData.saleDateTime) updateData.saleDateTime = new Date(updateData.saleDateTime);
+
+    // Recursively walk the update payload and convert any Firestore Timestamp-like
+    // objects ({_seconds,_nanoseconds} or {seconds,nanoseconds}) into proper JS Dates.
+    const sanitizeTimestamps = (obj) => {
+      if (obj === null || obj === undefined) return obj;
+      if (Array.isArray(obj)) return obj.map(sanitizeTimestamps);
+      if (typeof obj !== "object") return obj;
+      // Detect Firestore Timestamp shape
+      const secs = obj._seconds || obj.seconds;
+      if (secs !== undefined && typeof secs === "number") {
+        return new Date(secs * 1000);
+      }
+      // Recursively sanitize nested objects
+      const result = {};
+      for (const key of Object.keys(obj)) {
+        result[key] = sanitizeTimestamps(obj[key]);
+      }
+      return result;
+    };
+    const sanitized = sanitizeTimestamps(updateData);
+
+    // Convert any sanitized Date fields back to the updateData (preserving the reference)
+    for (const key of Object.keys(sanitized)) {
+      updateData[key] = sanitized[key];
+    }
 
     if (updateData.registrationNo !== undefined) {
       const { registrationNo, registrationStatus } = normalizeRegistration(updateData.registrationNo);
