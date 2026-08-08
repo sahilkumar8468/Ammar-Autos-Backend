@@ -559,27 +559,34 @@ const updateSale = async (req, res) => {
       return res.status(404).json({ success: false, message: "Sale record not found" });
     }
 
-    if (updateData.totalSaleAmount) updateData.totalSaleAmount = parseFloat(updateData.totalSaleAmount);
-    if (updateData.advanceReceived) updateData.advanceReceived = parseFloat(updateData.advanceReceived);
+    if (updateData.totalSaleAmount !== undefined) updateData.totalSaleAmount = parseFloat(updateData.totalSaleAmount) || 0;
+    if (updateData.advanceReceived !== undefined) updateData.advanceReceived = parseFloat(updateData.advanceReceived) || 0;
 
-    // Recursively walk the update payload and convert any Firestore Timestamp-like
-    // objects ({_seconds,_nanoseconds} or {seconds,nanoseconds}) into proper JS Dates.
-    const sanitizeTimestamps = (obj) => {
-      if (obj === null || obj === undefined) return obj;
-      if (Array.isArray(obj)) return obj.map(sanitizeTimestamps);
-      if (typeof obj !== "object") return obj;
-      // Detect Firestore Timestamp shape
-      const secs = obj._seconds || obj.seconds;
-      if (secs !== undefined && typeof secs === "number") {
-        return new Date(secs * 1000);
+    // Recalculate amountRemaining whenever totalSaleAmount or advanceReceived change
+    if (updateData.totalSaleAmount !== undefined || updateData.advanceReceived !== undefined) {
+      const total = updateData.totalSaleAmount !== undefined ? updateData.totalSaleAmount : (doc.data().totalSaleAmount || 0);
+      const advance = updateData.advanceReceived !== undefined ? updateData.advanceReceived : (doc.data().advanceReceived || 0);
+      updateData.amountRemaining = Math.max(total - advance, 0);
+    }
+
+    // Clean up empty strings → null for fields that should be numbers/dates or null
+    ["installmentMonths", "perMonthInstallment", "installmentStartDate"].forEach((field) => {
+      if (updateData[field] === "" || updateData[field] === undefined) {
+        // If saleType is being changed to cash, clear these fields
+        if (updateData.saleType === "cash") {
+          updateData[field] = null;
+        } else if (updateData[field] === "") {
+          // Don't overwrite with empty string — just remove the key so Firestore keeps existing value
+          delete updateData[field];
+        }
       }
-      // Recursively sanitize nested objects
-      const result = {};
-      for (const key of Object.keys(obj)) {
-        result[key] = sanitizeTimestamps(obj[key]);
-      }
-      return result;
-    };
+    });
+
+    // If switching to cash, clear installments
+    if (updateData.saleType === "cash") {
+      updateData.installments = [];
+    }
+
     const sanitized = sanitizeTimestamps(updateData);
 
     // Convert any sanitized Date fields back to the updateData (preserving the reference)
