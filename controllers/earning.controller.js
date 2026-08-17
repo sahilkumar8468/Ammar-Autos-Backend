@@ -86,13 +86,15 @@ const getEarningStats = async (req, res) => {
 
     const helperGetDate = (val) => {
       if (!val) return null;
-      if (val instanceof Date) return val;
-      if (typeof val === "object") {
-        const secs = val._seconds || val.seconds;
-        if (typeof secs === "number") return new Date(secs * 1000);
+      if (val instanceof Date) return isNaN(val.getTime()) ? null : val;
+      if (typeof val.toDate === "function") return val.toDate();
+      const secs = val._seconds ?? val.seconds;
+      if (typeof secs === "number") return new Date(secs * 1000);
+      if (typeof val === "string" || typeof val === "number") {
+        const d = new Date(val);
+        return isNaN(d.getTime()) ? null : d;
       }
-      const d = new Date(val);
-      return isNaN(d.getTime()) ? null : d;
+      return null;
     };
 
     // Filter sales within date range

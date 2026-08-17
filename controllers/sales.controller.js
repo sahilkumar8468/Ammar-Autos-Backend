@@ -379,34 +379,33 @@ const createSale = async (req, res) => {
   }
 };
 
+const parseDate = (val) => {
+  if (!val) return null;
+  if (val instanceof Date) return isNaN(val.getTime()) ? null : val;
+  if (typeof val.toDate === "function") return val.toDate();
+
+  const secs = val._seconds ?? val.seconds;
+  if (typeof secs === "number") return new Date(secs * 1000);
+
+  if (typeof val === "string" || typeof val === "number") {
+    const d = new Date(val);
+    return isNaN(d.getTime()) ? null : d;
+  }
+
+  return null;
+};
+
 /**
  * READ ALL: Fetch sales, with optional category, month, and search filters.
  * GET /api/sale?category=local_customer&month=2026-07&search=LEA-1234
- *
- * - month: "YYYY-MM" — restricts to sales whose saleDateTime falls in that month
- * - search: matched (case-insensitive, partial) against registrationNo,
- *   chasisNo, engineNo, and buyerCnic ("customer no"). Firestore can't do
- *   partial-text search server-side, so this filters in-memory after the
- *   month/category query narrows things down — fine at showroom-POS scale.
  */
 const getAllSales = async (req, res) => {
   try {
     const { category, month, search, page: pageStr, limit: limitStr } = req.query;
-    const page = Math.max(1, parseInt(pageStr) || 1);
-    const limit = Math.min(100, Math.max(1, parseInt(limitStr) || 10));
     let query = db.collection("sales");
 
     if (category && SALE_CATEGORIES.includes(category)) {
       query = query.where("category", "==", category);
-    }
-
-    if (month && /^\d{4}-\d{2}$/.test(month)) {
-      const [year, mon] = month.split("-").map(Number);
-      const start = new Date(year, mon - 1, 1);
-      const end = new Date(year, mon, 1); // first day of next month, exclusive
-      query = query
-        .where("saleDateTime", ">=", start)
-        .where("saleDateTime", "<", end);
     }
 
     const snapshot = await query.get();
@@ -416,10 +415,20 @@ const getAllSales = async (req, res) => {
       sales.push({ id: doc.id, ...doc.data() });
     });
 
-    // Sort in JS (newest first) to avoid Firestore composite-index issues
+    // In-memory month filter to prevent Firestore missing composite index 500 errors
+    if (month && /^\d{4}-\d{2}$/.test(month)) {
+      sales = sales.filter(s => {
+        const d = parseDate(s.saleDateTime || s.createdAt);
+        if (!d) return false;
+        const m = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+        return m === month;
+      });
+    }
+
+    // Sort in JS (newest first)
     sales.sort((a, b) => {
-      const dateA = a.saleDateTime?.toDate?.() || new Date(a.saleDateTime || 0);
-      const dateB = b.saleDateTime?.toDate?.() || new Date(b.saleDateTime || 0);
+      const dateA = parseDate(a.saleDateTime || a.createdAt) || new Date(0);
+      const dateB = parseDate(b.saleDateTime || b.createdAt) || new Date(0);
       return dateB - dateA;
     });
 
@@ -438,7 +447,6 @@ const getAllSales = async (req, res) => {
 
     const totalCount = sales.length;
 
-    // Optional pagination: only paginate if page or limit query parameters are explicitly passed
     let paged = sales;
     if (pageStr || limitStr) {
       const page = Math.max(1, parseInt(pageStr) || 1);
@@ -461,7 +469,6 @@ const getAllSales = async (req, res) => {
 /**
  * STATS: Bikes sold + revenue for a given month (defaults to all/current month).
  * GET /api/sale/stats?month=2026-07
- * "Revenue" = sum of totalSaleAmount for matching sales.
  */
 const getSaleStats = async (req, res) => {
   try {
@@ -481,16 +488,12 @@ const getSaleStats = async (req, res) => {
       let matchMonth = true;
 
       if (month && /^\d{4}-\d{2}$/.test(month)) {
-        if (!sale.saleDateTime) {
+        const d = parseDate(sale.saleDateTime || sale.createdAt);
+        if (!d) {
           matchMonth = false;
         } else {
-          const d = sale.saleDateTime?.seconds ? new Date(sale.saleDateTime.seconds * 1000) : new Date(sale.saleDateTime);
-          if (isNaN(d.getTime())) {
-            matchMonth = false;
-          } else {
-            const m = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-            if (m !== month) matchMonth = false;
-          }
+          const m = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+          if (m !== month) matchMonth = false;
         }
       }
 

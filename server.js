@@ -62,6 +62,11 @@ app.get("/", (req, res) => {
   });
 });
 
+const { getEarningStats } = require("./controllers/earning.controller");
+const earningRouter = express.Router();
+earningRouter.get("/", getEarningStats);
+earningRouter.get("/earning", getEarningStats);
+
 app.use("/api/auth", authRoutes);
 app.use("/api/purchase", purchaseRoutes);
 app.use("/api/sale", saleRoutes);
@@ -70,7 +75,7 @@ app.use("/api/registration", registrationRoutes);
 app.use("/api/inventory", inventoryRoutes);
 app.use("/api/customer", customerRoutes);
 app.use("/api/reports", reportsRoutes);
-app.use("/api/earning", reportsRoutes);
+app.use("/api/earning", earningRouter);
 
 // Also handle requests without /api prefix (frontend compatibility)
 app.use("/auth", authRoutes);
@@ -81,7 +86,7 @@ app.use("/registration", registrationRoutes);
 app.use("/inventory", inventoryRoutes);
 app.use("/customer", customerRoutes);
 app.use("/reports", reportsRoutes);
-app.use("/earning", reportsRoutes);
+app.use("/earning", earningRouter);
 
 const PORT = process.env.PORT || 5000;
 
