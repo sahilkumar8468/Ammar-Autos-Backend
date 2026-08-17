@@ -545,6 +545,69 @@ const lookupBikeByRegistration = async (req, res) => {
 };
 
 /**
+ * Recursively converts date strings or serialized Firestore timestamps ({ _seconds, _nanoseconds })
+ * into standard JavaScript Date objects for Firestore storage.
+ */
+const sanitizeTimestamps = (data) => {
+  if (data === null || data === undefined) return data;
+
+  if (data instanceof Date) return data;
+
+  if (
+    typeof data === "object" &&
+    ((typeof data._seconds === "number" && typeof data._nanoseconds === "number") ||
+     (typeof data.seconds === "number" && typeof data.nanoseconds === "number"))
+  ) {
+    const secs = data._seconds !== undefined ? data._seconds : data.seconds;
+    return new Date(secs * 1000);
+  }
+
+  if (Array.isArray(data)) {
+    return data.map((item) => sanitizeTimestamps(item));
+  }
+
+  if (typeof data === "object") {
+    const result = {};
+    const dateKeys = new Set([
+      "saleDateTime",
+      "installmentStartDate",
+      "dueDate",
+      "paidDate",
+      "lastOverdueReminderDate",
+      "createdAt",
+      "updatedAt",
+      "purchaseDate",
+      "purchaseDateTime"
+    ]);
+
+    for (const [key, value] of Object.entries(data)) {
+      if (value === null || value === undefined) {
+        result[key] = value;
+      } else if (dateKeys.has(key)) {
+        if (value instanceof Date) {
+          result[key] = value;
+        } else if (typeof value === "string") {
+          const d = new Date(value);
+          result[key] = isNaN(d.getTime()) ? null : d;
+        } else if (typeof value === "object") {
+          const sanitized = sanitizeTimestamps(value);
+          result[key] = sanitized instanceof Date ? sanitized : null;
+        } else {
+          result[key] = value;
+        }
+      } else if (typeof value === "object") {
+        result[key] = sanitizeTimestamps(value);
+      } else {
+        result[key] = value;
+      }
+    }
+    return result;
+  }
+
+  return data;
+};
+
+/**
  * UPDATE
  * PUT /api/sale/:id
  */
