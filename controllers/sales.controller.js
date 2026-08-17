@@ -132,22 +132,48 @@ const lookupBikeByEngine = async (req, res) => {
 };
 
 
-const buildInstallmentSchedule = (startDate, months, perMonthAmount) => {
+const buildInstallmentSchedule = (
+  startDate,
+  months,
+  perMonthAmount,
+  hasInitialGracePayment = false,
+  initialGraceAmount = 0,
+  initialGraceDueDate = null,
+  initialGraceDescription = ""
+) => {
   const schedule = [];
+  let monthOffset = 0;
+
+  if (hasInitialGracePayment && parseFloat(initialGraceAmount) > 0) {
+    const graceDate = initialGraceDueDate ? new Date(initialGraceDueDate) : new Date(Date.now() + 10 * 24 * 60 * 60 * 1000);
+    schedule.push({
+      monthNumber: 1,
+      dueDate: graceDate,
+      amount: parseFloat(initialGraceAmount || 0),
+      description: initialGraceDescription || "Initial / Grace Payment (10 Days)",
+      paid: false,
+      paidDate: null,
+      upcomingReminderSent: false,
+      lastOverdueReminderDate: null
+    });
+    monthOffset = 1;
+  }
+
   const start = startDate ? new Date(startDate) : new Date();
 
   for (let i = 1; i <= months; i++) {
     const dueDate = new Date(start);
-    dueDate.setMonth(dueDate.getMonth() + i);
+    dueDate.setMonth(dueDate.getMonth() + (i - 1));
 
     schedule.push({
-      monthNumber: i,
+      monthNumber: i + monthOffset,
       dueDate,
       amount: parseFloat(perMonthAmount || 0),
+      description: `Installment #${i}`,
       paid: false,
       paidDate: null,
-      upcomingReminderSent: false, // the single "due in a week" notice
-      lastOverdueReminderDate: null // used to throttle overdue reminders to once/day
+      upcomingReminderSent: false,
+      lastOverdueReminderDate: null
     });
   }
   return schedule;
@@ -193,7 +219,13 @@ const createSale = async (req, res) => {
       saleType, // "cash" | "installment"
       installmentMonths,
       perMonthInstallment,
-      installmentStartDate
+      installmentStartDate,
+      installmentDescription,
+      hasInitialGracePayment,
+      initialGraceAmount,
+      initialGraceDueDate,
+      initialGraceDescription,
+      installments: customInstallments
     } = req.body;
 
     if (!category || !SALE_CATEGORIES.includes(category)) {
@@ -245,14 +277,35 @@ const createSale = async (req, res) => {
       months = parseInt(installmentMonths || 0, 10);
       perMonth = parseFloat(perMonthInstallment || 0);
 
-      if (!months || !perMonth) {
-        return res.status(400).json({
-          success: false,
-          message: "installmentMonths and perMonthInstallment are required for installment sales."
-        });
-      }
+      if (Array.isArray(customInstallments) && customInstallments.length > 0) {
+        installments = customInstallments.map((inst, idx) => ({
+          monthNumber: inst.monthNumber || idx + 1,
+          dueDate: inst.dueDate ? new Date(inst.dueDate) : new Date(),
+          amount: parseFloat(inst.amount || 0),
+          description: inst.description || inst.notes || `Installment #${idx + 1}`,
+          paid: !!inst.paid,
+          paidDate: inst.paidDate ? new Date(inst.paidDate) : null,
+          upcomingReminderSent: !!inst.upcomingReminderSent,
+          lastOverdueReminderDate: inst.lastOverdueReminderDate ? new Date(inst.lastOverdueReminderDate) : null
+        }));
+      } else {
+        if (!months || !perMonth) {
+          return res.status(400).json({
+            success: false,
+            message: "installmentMonths and perMonthInstallment are required for installment sales."
+          });
+        }
 
-      installments = buildInstallmentSchedule(installmentStartDate, months, perMonth);
+        installments = buildInstallmentSchedule(
+          installmentStartDate,
+          months,
+          perMonth,
+          hasInitialGracePayment,
+          initialGraceAmount,
+          initialGraceDueDate,
+          initialGraceDescription
+        );
+      }
     }
 
     // For cash sales, everything is paid upfront — nothing remaining.
@@ -265,8 +318,6 @@ const createSale = async (req, res) => {
       buyerName,
       buyerFatherName: buyerFatherName || "",
       buyerCurrentAddress: buyerCurrentAddress || "",
-      // If addressSameAsPermanent is true, mirror current -> permanent, exactly
-      // like the frontend checkbox behavior described.
       buyerPermanentAddress: addressSameAsPermanent ? (buyerCurrentAddress || "") : (buyerPermanentAddress || ""),
       addressSameAsPermanent: !!addressSameAsPermanent,
       buyerCnic,
@@ -295,6 +346,11 @@ const createSale = async (req, res) => {
       installmentMonths: months || null,
       perMonthInstallment: perMonth || null,
       installmentStartDate: saleType === "installment" ? new Date(installmentStartDate || new Date()) : null,
+      installmentDescription: installmentDescription || "",
+      hasInitialGracePayment: !!hasInitialGracePayment,
+      initialGraceAmount: parseFloat(initialGraceAmount || 0),
+      initialGraceDueDate: initialGraceDueDate ? new Date(initialGraceDueDate) : null,
+      initialGraceDescription: initialGraceDescription || "",
       installments,
 
       createdAt: new Date(),
@@ -571,6 +627,7 @@ const sanitizeTimestamps = (data) => {
     const dateKeys = new Set([
       "saleDateTime",
       "installmentStartDate",
+      "initialGraceDueDate",
       "dueDate",
       "paidDate",
       "lastOverdueReminderDate",

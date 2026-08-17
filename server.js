@@ -70,6 +70,7 @@ app.use("/api/registration", registrationRoutes);
 app.use("/api/inventory", inventoryRoutes);
 app.use("/api/customer", customerRoutes);
 app.use("/api/reports", reportsRoutes);
+app.use("/api/earning", reportsRoutes);
 
 // Also handle requests without /api prefix (frontend compatibility)
 app.use("/auth", authRoutes);
@@ -80,6 +81,7 @@ app.use("/registration", registrationRoutes);
 app.use("/inventory", inventoryRoutes);
 app.use("/customer", customerRoutes);
 app.use("/reports", reportsRoutes);
+app.use("/earning", reportsRoutes);
 
 const PORT = process.env.PORT || 5000;
 
