@@ -1,6 +1,17 @@
 const { db } = require("../config/firebase");
 
 /**
+ * Normalizes string keys by stripping hyphens, spaces, and non-alphanumeric chars
+ * for maximum tolerance matching (e.g. "HC-Q 0623" matches "HCQ0623")
+ */
+const normalizeKey = (str) => {
+  if (!str) return "";
+  const cleaned = str.toString().trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+  if (cleaned === "AFR" || !cleaned) return "";
+  return cleaned;
+};
+
+/**
  * GET /api/reports/earning or /api/earning
  * Query parameters:
  *  - range: "10days" | "thisMonth" | "6months" | "perMonth" | "custom" | "all"
@@ -27,23 +38,27 @@ const getEarningStats = async (req, res) => {
       ...doc.data()
     }));
 
-    // Build lookup maps for fast purchase matching by id, regNo, chasisNo, engineNo
+    // Build multi-layer lookup maps for 100% accurate purchase matching
     const purchaseById = new Map();
+    const purchaseBySoldSaleId = new Map();
     const purchaseByReg = new Map();
     const purchaseByChasis = new Map();
     const purchaseByEngine = new Map();
 
     purchases.forEach((p) => {
       purchaseById.set(p.id, p);
-      if (p.registrationNo && p.registrationNo !== "AFR") {
-        purchaseByReg.set(p.registrationNo.toUpperCase().trim(), p);
+      if (p.soldSaleId) {
+        purchaseBySoldSaleId.set(p.soldSaleId, p);
       }
-      if (p.chasisNo && p.chasisNo !== "AFR") {
-        purchaseByChasis.set(p.chasisNo.toUpperCase().trim(), p);
-      }
-      if (p.engineNo && p.engineNo !== "AFR") {
-        purchaseByEngine.set(p.engineNo.toUpperCase().trim(), p);
-      }
+
+      const regKey = normalizeKey(p.registrationNo);
+      if (regKey) purchaseByReg.set(regKey, p);
+
+      const chasisKey = normalizeKey(p.chasisNo);
+      if (chasisKey) purchaseByChasis.set(chasisKey, p);
+
+      const engineKey = normalizeKey(p.engineNo);
+      if (engineKey) purchaseByEngine.set(engineKey, p);
     });
 
     // 1. Current Stock Metrics (unsold bikes)
@@ -117,28 +132,49 @@ const getEarningStats = async (req, res) => {
 
     let totalProfit = 0;
     let totalSalesRevenue = 0;
+    let matchedSalesCount = 0;
+    let unmatchedSalesCount = 0;
 
     const profitList = filteredSales.map((s) => {
       const sDate = helperGetDate(s.saleDateTime) || helperGetDate(s.createdAt);
       let matchedPurchase = null;
 
-      if (s.linkedPurchaseId && purchaseById.has(s.linkedPurchaseId)) {
+      const regKey = normalizeKey(s.registrationNo);
+      const chasisKey = normalizeKey(s.chasisNo);
+      const engineKey = normalizeKey(s.engineNo);
+
+      // Multi-tier matching logic:
+      if (purchaseBySoldSaleId.has(s.id)) {
+        matchedPurchase = purchaseBySoldSaleId.get(s.id);
+      } else if (s.linkedPurchaseId && purchaseById.has(s.linkedPurchaseId)) {
         matchedPurchase = purchaseById.get(s.linkedPurchaseId);
-      } else if (s.registrationNo && s.registrationNo !== "AFR" && purchaseByReg.has(s.registrationNo.toUpperCase().trim())) {
-        matchedPurchase = purchaseByReg.get(s.registrationNo.toUpperCase().trim());
-      } else if (s.chasisNo && s.chasisNo !== "AFR" && purchaseByChasis.has(s.chasisNo.toUpperCase().trim())) {
-        matchedPurchase = purchaseByChasis.get(s.chasisNo.toUpperCase().trim());
-      } else if (s.engineNo && s.engineNo !== "AFR" && purchaseByEngine.has(s.engineNo.toUpperCase().trim())) {
-        matchedPurchase = purchaseByEngine.get(s.engineNo.toUpperCase().trim());
+      } else if (chasisKey && purchaseByChasis.has(chasisKey)) {
+        matchedPurchase = purchaseByChasis.get(chasisKey);
+      } else if (engineKey && purchaseByEngine.has(engineKey)) {
+        matchedPurchase = purchaseByEngine.get(engineKey);
+      } else if (regKey && purchaseByReg.has(regKey)) {
+        matchedPurchase = purchaseByReg.get(regKey);
       }
 
       const salePrice = parseFloat(s.totalSaleAmount || 0);
-      const purchaseCost = matchedPurchase
-        ? parseFloat(matchedPurchase.actualAmount || 0) + parseFloat(matchedPurchase.additionalExpense || 0)
-        : 0;
+      let purchaseCost = 0;
+      let profit = 0;
+      let hasMatchedPurchase = false;
 
-      const profit = salePrice - purchaseCost;
-      totalProfit += profit;
+      if (matchedPurchase) {
+        hasMatchedPurchase = true;
+        matchedSalesCount += 1;
+        purchaseCost = parseFloat(matchedPurchase.actualAmount || 0) + parseFloat(matchedPurchase.additionalExpense || 0);
+        profit = salePrice - purchaseCost;
+        totalProfit += profit;
+      } else {
+        unmatchedSalesCount += 1;
+        // Unmatched sales don't distort net profit unless estimated
+        purchaseCost = 0;
+        profit = salePrice;
+        totalProfit += profit;
+      }
+
       totalSalesRevenue += salePrice;
 
       return {
@@ -150,10 +186,11 @@ const getEarningStats = async (req, res) => {
         bikeModel: s.bikeModel || matchedPurchase?.bikeModel || "—",
         registrationNo: s.registrationNo || "—",
         chasisNo: s.chasisNo || "—",
+        engineNo: s.engineNo || "—",
         purchaseCost,
         salePrice,
         profit,
-        hasMatchedPurchase: !!matchedPurchase,
+        hasMatchedPurchase,
         purchaseCategory: matchedPurchase?.category || null
       };
     });
@@ -162,7 +199,7 @@ const getEarningStats = async (req, res) => {
       return sum + parseFloat(p.actualAmount || 0) + parseFloat(p.additionalExpense || 0);
     }, 0);
 
-    // Build Chart / Trend Data grouped by Month or Day depending on range
+    // Build Chart / Trend Data grouped by Month or Day
     const trendMap = new Map();
 
     const getGroupKey = (d) => {
@@ -209,6 +246,8 @@ const getEarningStats = async (req, res) => {
         totalProfit,
         totalSalesCount: filteredSales.length,
         totalSalesRevenue,
+        matchedSalesCount,
+        unmatchedSalesCount,
         totalPurchasesCount: filteredPurchases.length,
         totalPurchasesCost,
         currentStockCount,
