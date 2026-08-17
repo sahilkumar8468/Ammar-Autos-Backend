@@ -1,3 +1,6 @@
+const express = require("express");
+const router = express.Router();
+const { db } = require("../config/firebase");
 const { getEarningStats } = require("../controllers/earning.controller");
 
 // GET /api/reports/earning - Profit & Earning analytics
