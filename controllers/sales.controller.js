@@ -1,6 +1,13 @@
 const { db } = require("../config/firebase");
 const { normalizeRegistration,normalizeChasis,normalizeEngine  } = require("./purchase.controller");
 
+const normalizeKey = (str) => {
+  if (!str) return "";
+  const cleaned = str.toString().trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+  if (cleaned === "AFR" || !cleaned) return "";
+  return cleaned;
+};
+
 const SALE_CATEGORIES = ["company", "local_customer", "dealer"];
 
 /**
@@ -359,13 +366,34 @@ const createSale = async (req, res) => {
 
     const docRef = await db.collection("sales").add(saleData);
 
+    let targetPurchaseId = linkedPurchaseId;
+    if (!targetPurchaseId) {
+      if (registrationStatus === "registered" && normalizedRegNo) {
+        const pSnap = await db.collection("purchases").where("registrationNo", "==", normalizedRegNo).limit(1).get();
+        if (!pSnap.empty && !pSnap.docs[0].data().sold) targetPurchaseId = pSnap.docs[0].id;
+      }
+      if (!targetPurchaseId && chasisNo && normalizeKey(chasisNo)) {
+        const pSnap = await db.collection("purchases").where("chasisNo", "==", chasisNo).limit(1).get();
+        if (!pSnap.empty && !pSnap.docs[0].data().sold) targetPurchaseId = pSnap.docs[0].id;
+      }
+      if (!targetPurchaseId && engineNo && normalizeKey(engineNo)) {
+        const pSnap = await db.collection("purchases").where("engineNo", "==", engineNo).limit(1).get();
+        if (!pSnap.empty && !pSnap.docs[0].data().sold) targetPurchaseId = pSnap.docs[0].id;
+      }
+    }
+
     // Mark the source purchase as sold, if this sale was linked to one.
-    if (linkedPurchaseId) {
-      await db.collection("purchases").doc(linkedPurchaseId).update({
+    if (targetPurchaseId) {
+      await db.collection("purchases").doc(targetPurchaseId).update({
         sold: true,
         soldSaleId: docRef.id,
         updatedAt: new Date()
-      });
+      }).catch(() => {});
+
+      if (!linkedPurchaseId) {
+        await docRef.update({ linkedPurchaseId: targetPurchaseId }).catch(() => {});
+        saleData.linkedPurchaseId = targetPurchaseId;
+      }
     }
 
     return res.status(201).json({
@@ -734,6 +762,23 @@ const updateSale = async (req, res) => {
         updateData.buyerCurrentAddress || doc.data().buyerCurrentAddress || "";
     }
 
+    if (updateData.linkedPurchaseId !== undefined && updateData.linkedPurchaseId !== doc.data().linkedPurchaseId) {
+      if (doc.data().linkedPurchaseId) {
+        await db.collection("purchases").doc(doc.data().linkedPurchaseId).update({
+          sold: false,
+          soldSaleId: null,
+          updatedAt: new Date()
+        }).catch(() => {});
+      }
+      if (updateData.linkedPurchaseId) {
+        await db.collection("purchases").doc(updateData.linkedPurchaseId).update({
+          sold: true,
+          soldSaleId: id,
+          updatedAt: new Date()
+        }).catch(() => {});
+      }
+    }
+
     updateData.updatedAt = new Date();
 
     await docRef.update(updateData);
@@ -811,7 +856,16 @@ const deleteSale = async (req, res) => {
         sold: false,
         soldSaleId: null,
         updatedAt: new Date()
-      });
+      }).catch(() => {});
+    }
+
+    const linkedSnap = await db.collection("purchases").where("soldSaleId", "==", id).get();
+    for (const pDoc of linkedSnap.docs) {
+      await pDoc.ref.update({
+        sold: false,
+        soldSaleId: null,
+        updatedAt: new Date()
+      }).catch(() => {});
     }
 
     return res.status(200).json({

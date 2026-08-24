@@ -61,8 +61,37 @@ const getEarningStats = async (req, res) => {
       if (engineKey) purchaseByEngine.set(engineKey, p);
     });
 
+    const soldLinkedPurchaseIds = new Set();
+    const soldRegSet = new Set();
+    const soldChasisSet = new Set();
+    const soldEngineSet = new Set();
+
+    sales.forEach((s) => {
+      if (s.linkedPurchaseId) soldLinkedPurchaseIds.add(s.linkedPurchaseId);
+      const reg = normalizeKey(s.registrationNo);
+      if (reg) soldRegSet.add(reg);
+      const chasis = normalizeKey(s.chasisNo);
+      if (chasis) soldChasisSet.add(chasis);
+      const engine = normalizeKey(s.engineNo);
+      if (engine) soldEngineSet.add(engine);
+    });
+
     // 1. Current Stock Metrics (unsold bikes)
-    const stockBikes = purchases.filter((p) => !p.sold);
+    const stockBikes = purchases.filter((p) => {
+      const regKey = normalizeKey(p.registrationNo);
+      const chasisKey = normalizeKey(p.chasisNo);
+      const engineKey = normalizeKey(p.engineNo);
+
+      const isSold =
+        p.sold === true ||
+        !!p.soldSaleId ||
+        soldLinkedPurchaseIds.has(p.id) ||
+        (regKey && soldRegSet.has(regKey)) ||
+        (chasisKey && soldChasisSet.has(chasisKey)) ||
+        (engineKey && soldEngineSet.has(engineKey));
+
+      return !isSold;
+    });
     const currentStockCount = stockBikes.length;
     const currentStockValue = stockBikes.reduce((sum, p) => {
       const cost = parseFloat(p.actualAmount || 0) + parseFloat(p.additionalExpense || 0);
