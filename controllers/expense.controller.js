@@ -209,7 +209,7 @@ const deleteExpense = async (req, res) => {
  */
 const getExpenseOverview = async (req, res) => {
   try {
-    const { range = "thisMonth", startDate, endDate, month } = req.query;
+    const { range = "today", startDate, endDate, month, date } = req.query;
 
     const [expensesSnap, purchasesSnap, salesSnap] = await Promise.all([
       db.collection("expenses").get(),
@@ -244,7 +244,19 @@ const getExpenseOverview = async (req, res) => {
     let filterStart = null;
     let filterEnd = null;
 
-    if (range === "thisMonth") {
+    if (range === "today") {
+      filterStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+      filterEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+    } else if (range === "yesterday") {
+      const yest = new Date(now);
+      yest.setDate(yest.getDate() - 1);
+      filterStart = new Date(yest.getFullYear(), yest.getMonth(), yest.getDate(), 0, 0, 0, 0);
+      filterEnd = new Date(yest.getFullYear(), yest.getMonth(), yest.getDate(), 23, 59, 59, 999);
+    } else if (range === "specificDate" && date && /^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      const [y, m, d] = date.split("-").map(Number);
+      filterStart = new Date(y, m - 1, d, 0, 0, 0, 0);
+      filterEnd = new Date(y, m - 1, d, 23, 59, 59, 999);
+    } else if (range === "thisMonth") {
       // 1st of current month to end of current month
       filterStart = new Date(now.getFullYear(), now.getMonth(), 1);
       filterStart.setHours(0, 0, 0, 0);
