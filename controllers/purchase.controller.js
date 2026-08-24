@@ -57,7 +57,9 @@ const createPurchase = async (req, res) => {
       bikeColor,
       chasisNo,
       engineNo,
-      registrationNo
+      registrationNo,
+      isReturn,
+      previousSaleId
     } = req.body;
 
     if (!category || !["company", "local_customer", "dealer"].includes(category)) {
@@ -71,17 +73,18 @@ const createPurchase = async (req, res) => {
     const { chasisNo: normalizedChasisNo, chasisStatus } = normalizeChasis(chasisNo);
     const { engineNo: normalizedEngineNo, engineStatus } = normalizeEngine(engineNo);
 
-    // If a real (non-AFR) registration number is given, it must be unique across purchases
+    // If a real (non-AFR) registration number is given, check if an unsold instance is already in stock
     if (registrationStatus === "registered") {
       const existing = await db
         .collection("purchases")
         .where("registrationNo", "==", normalizedRegNo)
+        .where("sold", "==", false)
         .limit(1)
         .get();
       if (!existing.empty) {
         return res.status(409).json({
           success: false,
-          message: `A purchase with registration number "${normalizedRegNo}" already exists.`
+          message: `A bike with registration number "${normalizedRegNo}" is already in active inventory/stock.`
         });
       }
     }
@@ -110,6 +113,8 @@ const createPurchase = async (req, res) => {
       registrationNo: normalizedRegNo,
       registrationStatus, // "registered" | "AFR" | "unregistered"
       sold: false, // flips to true once a Sale record is created against this bike
+      isReturn: !!isReturn,
+      previousSaleId: previousSaleId || null,
       approved: false, // flips to true once the registration/AFR letter is received
       approvedAt: null,
       buyer: "Showroom Owner",
@@ -228,14 +233,30 @@ const lookupPurchaseByRegistration = async (req, res) => {
     const snapshot = await db
       .collection("purchases")
       .where("registrationNo", "==", normalizedRegNo)
+      .where("sold", "==", false)
       .limit(1)
       .get();
 
-    if (snapshot.empty) {
+    if (!snapshot.empty) {
+      const doc = snapshot.docs[0];
+      return res.status(200).json({
+        success: true,
+        found: true,
+        data: { id: doc.id, ...doc.data() }
+      });
+    }
+
+    const anySnapshot = await db
+      .collection("purchases")
+      .where("registrationNo", "==", normalizedRegNo)
+      .limit(1)
+      .get();
+
+    if (anySnapshot.empty) {
       return res.status(200).json({ success: true, found: false });
     }
 
-    const doc = snapshot.docs[0];
+    const doc = anySnapshot.docs[0];
     return res.status(200).json({
       success: true,
       found: true,

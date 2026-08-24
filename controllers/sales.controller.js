@@ -30,25 +30,41 @@ const lookupBikeByChasis = async (req, res) => {
       return res.status(200).json({ success: true, found: false });
     }
 
-    const purchaseSnap = await db
+    const unsoldSnap = await db
       .collection("purchases")
       .where("chasisNo", "==", normalizedChasisNo)
+      .where("sold", "==", false)
       .limit(1)
       .get();
 
-    if (purchaseSnap.empty) {
-      return res.status(200).json({ success: true, found: false });
+    let purchaseDoc = null;
+    let isSold = false;
+
+    if (!unsoldSnap.empty) {
+      purchaseDoc = unsoldSnap.docs[0];
+      isSold = false;
+    } else {
+      const anySnap = await db
+        .collection("purchases")
+        .where("chasisNo", "==", normalizedChasisNo)
+        .limit(1)
+        .get();
+
+      if (anySnap.empty) {
+        return res.status(200).json({ success: true, found: false });
+      }
+      purchaseDoc = anySnap.docs[0];
+      isSold = true;
     }
 
-    const purchaseDoc = purchaseSnap.docs[0];
     const purchase = purchaseDoc.data();
 
-    if (purchase.sold) {
+    if (isSold || purchase.sold) {
       return res.status(200).json({
         success: true,
         found: true,
         alreadySold: true,
-        message: "This bike is already marked as sold in a previous sale record."
+        message: "This bike is already marked as sold in a previous sale record. Please use Return / Buy Back first."
       });
     }
 
@@ -91,25 +107,41 @@ const lookupBikeByEngine = async (req, res) => {
       return res.status(200).json({ success: true, found: false });
     }
 
-    const purchaseSnap = await db
+    const unsoldSnap = await db
       .collection("purchases")
       .where("engineNo", "==", normalizedEngineNo)
+      .where("sold", "==", false)
       .limit(1)
       .get();
 
-    if (purchaseSnap.empty) {
-      return res.status(200).json({ success: true, found: false });
+    let purchaseDoc = null;
+    let isSold = false;
+
+    if (!unsoldSnap.empty) {
+      purchaseDoc = unsoldSnap.docs[0];
+      isSold = false;
+    } else {
+      const anySnap = await db
+        .collection("purchases")
+        .where("engineNo", "==", normalizedEngineNo)
+        .limit(1)
+        .get();
+
+      if (anySnap.empty) {
+        return res.status(200).json({ success: true, found: false });
+      }
+      purchaseDoc = anySnap.docs[0];
+      isSold = true;
     }
 
-    const purchaseDoc = purchaseSnap.docs[0];
     const purchase = purchaseDoc.data();
 
-    if (purchase.sold) {
+    if (isSold || purchase.sold) {
       return res.status(200).json({
         success: true,
         found: true,
         alreadySold: true,
-        message: "This bike is already marked as sold in a previous sale record."
+        message: "This bike is already marked as sold in a previous sale record. Please use Return / Buy Back first."
       });
     }
 
@@ -258,18 +290,34 @@ const createSale = async (req, res) => {
 
     const { registrationNo: normalizedRegNo, registrationStatus } = normalizeRegistration(registrationNo);
 
-    // Only enforce "already sold" checks for real registration numbers.
-    if (registrationStatus === "registered") {
-      const existingSale = await db
-        .collection("sales")
-        .where("registrationNo", "==", normalizedRegNo)
-        .limit(1)
-        .get();
-      if (!existingSale.empty) {
+    // Check if the bike is available for sale (must have an active unsold purchase or be a valid new entry)
+    if (linkedPurchaseId) {
+      const pDoc = await db.collection("purchases").doc(linkedPurchaseId).get();
+      if (!pDoc.exists || pDoc.data().sold) {
         return res.status(409).json({
           success: false,
-          message: `A sale already exists for registration number "${normalizedRegNo}".`
+          message: "This bike purchase record is already marked as sold."
         });
+      }
+    } else if (registrationStatus === "registered") {
+      const unsoldSnap = await db
+        .collection("purchases")
+        .where("registrationNo", "==", normalizedRegNo)
+        .where("sold", "==", false)
+        .limit(1)
+        .get();
+      if (unsoldSnap.empty) {
+        const anySnap = await db
+          .collection("purchases")
+          .where("registrationNo", "==", normalizedRegNo)
+          .limit(1)
+          .get();
+        if (!anySnap.empty) {
+          return res.status(409).json({
+            success: false,
+            message: `This bike (${normalizedRegNo}) is already marked as sold. Record a Return / Buy Back purchase first.`
+          });
+        }
       }
     }
 
@@ -584,25 +632,41 @@ const lookupBikeByRegistration = async (req, res) => {
       });
     }
 
-    const purchaseSnap = await db
+    const unsoldSnap = await db
       .collection("purchases")
       .where("registrationNo", "==", normalizedRegNo)
+      .where("sold", "==", false)
       .limit(1)
       .get();
 
-    if (purchaseSnap.empty) {
-      return res.status(200).json({ success: true, found: false });
+    let purchaseDoc = null;
+    let isSold = false;
+
+    if (!unsoldSnap.empty) {
+      purchaseDoc = unsoldSnap.docs[0];
+      isSold = false;
+    } else {
+      const anySnap = await db
+        .collection("purchases")
+        .where("registrationNo", "==", normalizedRegNo)
+        .limit(1)
+        .get();
+
+      if (anySnap.empty) {
+        return res.status(200).json({ success: true, found: false });
+      }
+      purchaseDoc = anySnap.docs[0];
+      isSold = true;
     }
 
-    const purchaseDoc = purchaseSnap.docs[0];
     const purchase = purchaseDoc.data();
 
-    if (purchase.sold) {
+    if (isSold || purchase.sold) {
       return res.status(200).json({
         success: true,
         found: true,
         alreadySold: true,
-        message: "This bike is already marked as sold in a previous sale record."
+        message: "This bike is already marked as sold in a previous sale record. Please use Return / Buy Back first."
       });
     }
 
