@@ -15,6 +15,7 @@ const registrationRoutes = require("./routes/registration.routes");
 const inventoryRoutes = require("./routes/inventory.routes");
 const customerRoutes = require("./routes/customer.routes");
 const reportsRoutes = require("./routes/reports.routes");
+const expenseRoutes = require("./routes/expense.routes");
 
 // Starts the daily cron schedule (installment reminders) as a side effect
 // require("./jobs/reminder.job");
@@ -76,6 +77,7 @@ app.use("/api/inventory", inventoryRoutes);
 app.use("/api/customer", customerRoutes);
 app.use("/api/reports", reportsRoutes);
 app.use("/api/earning", earningRouter);
+app.use("/api/expense", expenseRoutes);
 
 // Also handle requests without /api prefix (frontend compatibility)
 app.use("/auth", authRoutes);
@@ -87,6 +89,7 @@ app.use("/inventory", inventoryRoutes);
 app.use("/customer", customerRoutes);
 app.use("/reports", reportsRoutes);
 app.use("/earning", earningRouter);
+app.use("/expense", expenseRoutes);
 
 const PORT = process.env.PORT || 5000;
 
