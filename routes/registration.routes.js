@@ -34,12 +34,102 @@ router.get("/", async (req, res) => {
   }
 });
 
+// Helper to sync registration changes to linked purchase record
+async function syncPurchaseFromRegistration(regRecord) {
+  try {
+    let purchaseRef = null;
+    if (regRecord.bikeId) {
+      purchaseRef = db.collection("purchases").doc(regRecord.bikeId);
+    } else if (regRecord.chasisNo) {
+      const snap = await db.collection("purchases").where("chasisNo", "==", regRecord.chasisNo.trim()).limit(1).get();
+      if (!snap.empty) purchaseRef = snap.docs[0].ref;
+    }
+
+    if (purchaseRef) {
+      const pDoc = await purchaseRef.get();
+      if (pDoc.exists) {
+        const updateData = { updatedAt: new Date() };
+        if (regRecord.paperReceived) {
+          updateData.approved = true;
+          updateData.approvedAt = new Date();
+        }
+        if (regRecord.registrationNo && regRecord.registrationNo.trim().toUpperCase() !== "AFR") {
+          updateData.registrationNo = regRecord.registrationNo.trim();
+          updateData.registrationStatus = "registered";
+        }
+        await purchaseRef.update(updateData);
+      }
+    }
+  } catch (err) {
+    console.error("Error syncing purchase from registration:", err);
+  }
+}
+
 // Create registration record
 router.post("/", async (req, res) => {
   try {
-    const record = { ...req.body, paperReceived: req.body.paperReceived || false, createdAt: new Date() };
+    const record = {
+      ...req.body,
+      paperReceived: req.body.paperReceived || false,
+      agentTotalMoney: parseFloat(req.body.agentTotalMoney || 0),
+      customerTotalMoney: parseFloat(req.body.customerTotalMoney || 0),
+      agentAdvance: parseFloat(req.body.agentAdvance || 0),
+      createdAt: new Date(),
+      updatedAt: new Date()
+    };
     const docRef = await db.collection("registrations").add(record);
-    return res.json({ success: true, data: { id: docRef.id, ...record } });
+    const savedRecord = { id: docRef.id, ...record };
+    
+    if (savedRecord.paperReceived || (savedRecord.registrationNo && savedRecord.registrationNo.trim().toUpperCase() !== "AFR")) {
+      await syncPurchaseFromRegistration(savedRecord);
+    }
+    
+    return res.json({ success: true, data: savedRecord });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// Update registration record
+router.put("/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const docRef = db.collection("registrations").doc(id);
+    const doc = await docRef.get();
+    if (!doc.exists) return res.status(404).json({ success: false, message: "Registration record not found" });
+
+    const updateData = {
+      ...req.body,
+      agentTotalMoney: parseFloat(req.body.agentTotalMoney ?? doc.data().agentTotalMoney ?? 0),
+      customerTotalMoney: parseFloat(req.body.customerTotalMoney ?? doc.data().customerTotalMoney ?? 0),
+      agentAdvance: parseFloat(req.body.agentAdvance ?? doc.data().agentAdvance ?? 0),
+      updatedAt: new Date()
+    };
+
+    await docRef.update(updateData);
+    const updatedDoc = (await docRef.get()).data();
+    const updatedRecord = { id, ...updatedDoc };
+
+    if (updatedRecord.paperReceived || (updatedRecord.registrationNo && updatedRecord.registrationNo.trim().toUpperCase() !== "AFR")) {
+      await syncPurchaseFromRegistration(updatedRecord);
+    }
+
+    return res.json({ success: true, data: updatedRecord });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// Delete registration record
+router.delete("/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const docRef = db.collection("registrations").doc(id);
+    const doc = await docRef.get();
+    if (!doc.exists) return res.status(404).json({ success: false, message: "Registration record not found" });
+
+    await docRef.delete();
+    return res.json({ success: true, message: "Registration deleted successfully" });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
   }
@@ -54,9 +144,15 @@ router.patch("/:id/receive-paper", async (req, res) => {
     if (!doc.exists) return res.status(404).json({ success: false, message: "Registration record not found" });
     
     const currentStatus = doc.data().paperReceived || false;
-    await docRef.update({ paperReceived: !currentStatus, updatedAt: new Date() });
+    const newStatus = !currentStatus;
+    await docRef.update({ paperReceived: newStatus, updatedAt: new Date() });
     
-    return res.json({ success: true, paperReceived: !currentStatus });
+    const updatedRecord = { id, ...doc.data(), paperReceived: newStatus };
+    if (newStatus) {
+      await syncPurchaseFromRegistration(updatedRecord);
+    }
+    
+    return res.json({ success: true, paperReceived: newStatus });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
   }

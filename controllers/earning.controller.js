@@ -23,9 +23,10 @@ const getEarningStats = async (req, res) => {
   try {
     const { range = "all", startDate, endDate, month } = req.query;
 
-    const [purchasesSnap, salesSnap] = await Promise.all([
+    const [purchasesSnap, salesSnap, regSnap] = await Promise.all([
       db.collection("purchases").get(),
-      db.collection("sales").get()
+      db.collection("sales").get(),
+      db.collection("registrations").get()
     ]);
 
     const purchases = purchasesSnap.docs.map((doc) => ({
@@ -34,6 +35,11 @@ const getEarningStats = async (req, res) => {
     }));
 
     const sales = salesSnap.docs.map((doc) => ({
+      id: doc.id,
+      ...doc.data()
+    }));
+
+    const registrations = regSnap.docs.map((doc) => ({
       id: doc.id,
       ...doc.data()
     }));
@@ -159,12 +165,21 @@ const getEarningStats = async (req, res) => {
       return true;
     });
 
-    let totalProfit = 0;
+    // Filter registrations within date range
+    const filteredRegistrations = registrations.filter((r) => {
+      const rDate = helperGetDate(r.registrationDateTime) || helperGetDate(r.createdAt);
+      if (!rDate) return true;
+      if (filterStart && rDate < filterStart) return false;
+      if (filterEnd && rDate > filterEnd) return false;
+      return true;
+    });
+
+    let totalBikeSalesProfit = 0;
     let totalSalesRevenue = 0;
     let matchedSalesCount = 0;
     let unmatchedSalesCount = 0;
 
-    const profitList = filteredSales.map((s) => {
+    const salesProfitList = filteredSales.map((s) => {
       const sDate = helperGetDate(s.saleDateTime) || helperGetDate(s.createdAt);
       let matchedPurchase = null;
 
@@ -195,18 +210,18 @@ const getEarningStats = async (req, res) => {
         matchedSalesCount += 1;
         purchaseCost = parseFloat(matchedPurchase.actualAmount || 0) + parseFloat(matchedPurchase.additionalExpense || 0);
         profit = salePrice - purchaseCost;
-        totalProfit += profit;
+        totalBikeSalesProfit += profit;
       } else {
         unmatchedSalesCount += 1;
-        // Unmatched sales don't distort net profit unless estimated
         purchaseCost = 0;
         profit = salePrice;
-        totalProfit += profit;
+        totalBikeSalesProfit += profit;
       }
 
       totalSalesRevenue += salePrice;
 
       return {
+        recordType: "sale",
         saleId: s.id,
         saleDate: sDate ? sDate.toISOString() : null,
         buyerName: s.buyerName || "—",
@@ -222,6 +237,40 @@ const getEarningStats = async (req, res) => {
         hasMatchedPurchase,
         purchaseCategory: matchedPurchase?.category || null
       };
+    });
+
+    let totalRegProfit = 0;
+    const regProfitList = filteredRegistrations.map((r) => {
+      const rDate = helperGetDate(r.registrationDateTime) || helperGetDate(r.createdAt);
+      const agentCost = parseFloat(r.agentTotalMoney || 0);
+      const customerCharge = parseFloat(r.customerTotalMoney || 0);
+      const profit = customerCharge - agentCost;
+      totalRegProfit += profit;
+
+      return {
+        recordType: "registration",
+        saleId: r.id,
+        saleDate: rDate ? rDate.toISOString() : null,
+        buyerName: r.agentLetter ? `Agent: ${r.agentLetter}` : "Registration Paper",
+        buyerCnic: "—",
+        bikeCompany: r.bikeCompany || "—",
+        bikeModel: r.bikeModel || "—",
+        registrationNo: r.registrationNo || "—",
+        chasisNo: r.chasisNo || "—",
+        engineNo: "—",
+        purchaseCost: agentCost,
+        salePrice: customerCharge,
+        profit,
+        hasMatchedPurchase: true,
+        purchaseCategory: "registration"
+      };
+    });
+
+    const totalProfit = totalBikeSalesProfit + totalRegProfit;
+    const combinedProfitList = [...salesProfitList, ...regProfitList].sort((a, b) => {
+      const dA = a.saleDate ? new Date(a.saleDate).getTime() : 0;
+      const dB = b.saleDate ? new Date(b.saleDate).getTime() : 0;
+      return dB - dA;
     });
 
     const totalPurchasesCost = filteredPurchases.reduce((sum, p) => {
@@ -249,7 +298,18 @@ const getEarningStats = async (req, res) => {
       entry.salesCount += 1;
       entry.revenue += parseFloat(s.totalSaleAmount || 0);
 
-      const matched = profitList.find((p) => p.saleId === s.id);
+      const matched = salesProfitList.find((p) => p.saleId === s.id);
+      if (matched) entry.profit += matched.profit;
+    });
+
+    filteredRegistrations.forEach((r) => {
+      const rDate = helperGetDate(r.registrationDateTime) || helperGetDate(r.createdAt);
+      const key = getGroupKey(rDate);
+      if (!trendMap.has(key)) {
+        trendMap.set(key, { period: key, profit: 0, salesCount: 0, revenue: 0, purchasesCount: 0, purchaseCost: 0 });
+      }
+      const entry = trendMap.get(key);
+      const matched = regProfitList.find((p) => p.saleId === r.id);
       if (matched) entry.profit += matched.profit;
     });
 
@@ -273,8 +333,11 @@ const getEarningStats = async (req, res) => {
       filterEnd: filterEnd ? filterEnd.toISOString() : null,
       summary: {
         totalProfit,
+        totalBikeSalesProfit,
+        totalRegProfit,
         totalSalesCount: filteredSales.length,
         totalSalesRevenue,
+        totalRegistrationsCount: filteredRegistrations.length,
         matchedSalesCount,
         unmatchedSalesCount,
         totalPurchasesCount: filteredPurchases.length,
@@ -283,7 +346,7 @@ const getEarningStats = async (req, res) => {
         currentStockValue
       },
       chartData,
-      profitList
+      profitList: combinedProfitList
     });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
