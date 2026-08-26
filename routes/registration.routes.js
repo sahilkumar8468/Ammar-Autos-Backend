@@ -37,6 +37,9 @@ router.get("/", async (req, res) => {
 // Helper to sync registration changes to linked purchase record
 async function syncPurchaseFromRegistration(regRecord) {
   try {
+    if (regRecord.registrationType === "external" || regRecord.isExternal) {
+      return; // Do not sync 3rd party bike entries to showroom purchases
+    }
     let purchaseRef = null;
     if (regRecord.bikeId) {
       purchaseRef = db.collection("purchases").doc(regRecord.bikeId);
@@ -68,8 +71,10 @@ async function syncPurchaseFromRegistration(regRecord) {
 // Create registration record
 router.post("/", async (req, res) => {
   try {
+    const registrationType = req.body.registrationType || (req.body.bikeId ? "showroom" : "external");
     const record = {
       ...req.body,
+      registrationType,
       paperReceived: req.body.paperReceived || false,
       agentTotalMoney: parseFloat(req.body.agentTotalMoney || 0),
       customerTotalMoney: parseFloat(req.body.customerTotalMoney || 0),
@@ -80,7 +85,7 @@ router.post("/", async (req, res) => {
     const docRef = await db.collection("registrations").add(record);
     const savedRecord = { id: docRef.id, ...record };
     
-    if (savedRecord.paperReceived || (savedRecord.registrationNo && savedRecord.registrationNo.trim().toUpperCase() !== "AFR")) {
+    if (savedRecord.registrationType === "showroom" && (savedRecord.paperReceived || (savedRecord.registrationNo && savedRecord.registrationNo.trim().toUpperCase() !== "AFR"))) {
       await syncPurchaseFromRegistration(savedRecord);
     }
     
@@ -110,7 +115,7 @@ router.put("/:id", async (req, res) => {
     const updatedDoc = (await docRef.get()).data();
     const updatedRecord = { id, ...updatedDoc };
 
-    if (updatedRecord.paperReceived || (updatedRecord.registrationNo && updatedRecord.registrationNo.trim().toUpperCase() !== "AFR")) {
+    if (updatedRecord.registrationType !== "external" && (updatedRecord.paperReceived || (updatedRecord.registrationNo && updatedRecord.registrationNo.trim().toUpperCase() !== "AFR"))) {
       await syncPurchaseFromRegistration(updatedRecord);
     }
 
