@@ -27,12 +27,12 @@ const parseDate = (val) => {
 };
 
 /**
- * CREATE: Add a new manual daily expense (e.g. employee wage, chai, spare parts, utilities)
+ * CREATE: Add a new manual daily expense or income (e.g. employee wage, chai, spare parts, utilities)
  * POST /api/expense
  */
 const createExpense = async (req, res) => {
   try {
-    const { title, amount, category, expenseDate, description } = req.body;
+    const { title, amount, category, expenseDate, description, transactionType = "expense" } = req.body;
 
     if (!title || !title.trim()) {
       return res.status(400).json({ success: false, message: "Expense title is required." });
@@ -40,12 +40,13 @@ const createExpense = async (req, res) => {
 
     const numericAmount = parseFloat(amount);
     if (isNaN(numericAmount) || numericAmount <= 0) {
-      return res.status(400).json({ success: false, message: "A valid positive expense amount is required." });
+      return res.status(400).json({ success: false, message: "A valid positive amount is required." });
     }
 
     const expenseData = {
       title: title.trim(),
       amount: numericAmount,
+      transactionType: transactionType === "income" ? "income" : "expense",
       category: category ? category.trim() : "General",
       expenseDate: expenseDate ? new Date(expenseDate) : new Date(),
       description: description ? description.trim() : "",
@@ -57,7 +58,7 @@ const createExpense = async (req, res) => {
 
     return res.status(201).json({
       success: true,
-      message: "Daily expense recorded successfully",
+      message: `${transactionType === "income" ? "Income" : "Expense"} recorded successfully`,
       id: docRef.id,
       data: expenseData
     });
@@ -136,7 +137,7 @@ const getAllExpenses = async (req, res) => {
 const updateExpense = async (req, res) => {
   try {
     const { id } = req.params;
-    const { title, amount, category, expenseDate, description } = req.body;
+    const { title, amount, category, expenseDate, description, transactionType } = req.body;
 
     const docRef = db.collection("expenses").doc(id);
     const doc = await docRef.get();
@@ -161,6 +162,7 @@ const updateExpense = async (req, res) => {
     if (category !== undefined) updateData.category = category.trim();
     if (description !== undefined) updateData.description = description.trim();
     if (expenseDate !== undefined) updateData.expenseDate = new Date(expenseDate);
+    if (transactionType !== undefined) updateData.transactionType = transactionType === "income" ? "income" : "expense";
 
     await docRef.update(updateData);
 
@@ -199,27 +201,24 @@ const deleteExpense = async (req, res) => {
 };
 
 /**
- * OVERVIEW / LEDGER: Combines manual expenses, bike purchases, and bike sales into a unified cash flow & profit overview
+ * OVERVIEW / GENERAL LEDGER: Combines manual expenses, bike purchases, bike sales, and registrations into a daily cash flow & general ledger
  * GET /api/expense/overview
- * Params:
- *  - range: "thisMonth" | "pastMonth" | "6months" | "1year" | "perMonth" | "custom" | "all"
- *  - startDate: "YYYY-MM-DD"
- *  - endDate: "YYYY-MM-DD"
- *  - month: "YYYY-MM"
  */
 const getExpenseOverview = async (req, res) => {
   try {
     const { range = "today", startDate, endDate, month, date } = req.query;
 
-    const [expensesSnap, purchasesSnap, salesSnap] = await Promise.all([
+    const [expensesSnap, purchasesSnap, salesSnap, regSnap] = await Promise.all([
       db.collection("expenses").get(),
       db.collection("purchases").get(),
-      db.collection("sales").get()
+      db.collection("sales").get(),
+      db.collection("registrations").get()
     ]);
 
     const expenses = expensesSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
     const purchases = purchasesSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
     const sales = salesSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    const registrations = regSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 
     // Build multi-layer lookup maps for purchases to compute accurate gross profit on sales
     const purchaseById = new Map();
@@ -257,12 +256,10 @@ const getExpenseOverview = async (req, res) => {
       filterStart = new Date(y, m - 1, d, 0, 0, 0, 0);
       filterEnd = new Date(y, m - 1, d, 23, 59, 59, 999);
     } else if (range === "thisMonth") {
-      // 1st of current month to end of current month
       filterStart = new Date(now.getFullYear(), now.getMonth(), 1);
       filterStart.setHours(0, 0, 0, 0);
       filterEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
     } else if (range === "pastMonth") {
-      // Previous calendar month
       filterStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
       filterStart.setHours(0, 0, 0, 0);
       filterEnd = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
@@ -290,7 +287,6 @@ const getExpenseOverview = async (req, res) => {
       }
     }
 
-    // Filter helper
     const isInRange = (d) => {
       if (!d) return true;
       if (filterStart && d < filterStart) return false;
@@ -298,31 +294,28 @@ const getExpenseOverview = async (req, res) => {
       return true;
     };
 
-    // 1. Filtered Expenses
-    const filteredExpenses = expenses.filter(e => {
-      const d = parseDate(e.expenseDate || e.createdAt);
-      return isInRange(d);
-    });
+    // Filter by date range
+    const filteredExpenses = expenses.filter(e => isInRange(parseDate(e.expenseDate || e.createdAt)));
+    const filteredPurchases = purchases.filter(p => isInRange(parseDate(p.purchaseDateTime || p.createdAt)));
+    const filteredSales = sales.filter(s => isInRange(parseDate(s.saleDateTime || s.createdAt)));
+    const filteredRegistrations = registrations.filter(r => isInRange(parseDate(r.registrationDateTime || r.createdAt)));
 
-    // 2. Filtered Purchases
-    const filteredPurchases = purchases.filter(p => {
-      const d = parseDate(p.purchaseDateTime || p.createdAt);
-      return isInRange(d);
-    });
+    // Categorize operational expenses vs additional income entries
+    const generalExpensesList = filteredExpenses.filter(e => e.transactionType !== "income");
+    const manualIncomeList = filteredExpenses.filter(e => e.transactionType === "income");
 
-    // 3. Filtered Sales
-    const filteredSales = sales.filter(s => {
-      const d = parseDate(s.saleDateTime || s.createdAt);
-      return isInRange(d);
-    });
+    const totalGeneralExpenses = generalExpensesList.reduce((sum, e) => sum + (parseFloat(e.amount) || 0), 0);
+    const totalManualIncome = manualIncomeList.reduce((sum, e) => sum + (parseFloat(e.amount) || 0), 0);
 
-    // Aggregations
-    const totalGeneralExpenses = filteredExpenses.reduce((sum, e) => sum + (parseFloat(e.amount) || 0), 0);
     const totalBikePurchasesCost = filteredPurchases.reduce((sum, p) => sum + (parseFloat(p.actualAmount) || 0) + (parseFloat(p.additionalExpense) || 0), 0);
     const totalBikeSalesRevenue = filteredSales.reduce((sum, s) => sum + (parseFloat(s.totalSaleAmount) || 0), 0);
 
+    const totalRegCustomerFees = filteredRegistrations.reduce((sum, r) => sum + (parseFloat(r.customerTotalMoney) || 0), 0);
+    const totalRegAgentCosts = filteredRegistrations.reduce((sum, r) => sum + (parseFloat(r.agentTotalMoney) || 0), 0);
+    const totalRegProfit = totalRegCustomerFees - totalRegAgentCosts;
+
     // Calculate gross profit on sales
-    let totalGrossProfit = 0;
+    let totalBikeGrossProfit = 0;
     const saleListWithProfit = filteredSales.map(s => {
       const sDate = parseDate(s.saleDateTime || s.createdAt);
       let matchedPurchase = null;
@@ -355,7 +348,7 @@ const getExpenseOverview = async (req, res) => {
         profit = salePrice;
       }
 
-      totalGrossProfit += profit;
+      totalBikeGrossProfit += profit;
 
       return {
         id: s.id,
@@ -374,12 +367,17 @@ const getExpenseOverview = async (req, res) => {
       };
     });
 
-    const netProfit = totalGrossProfit - totalGeneralExpenses;
-    const netCashFlow = totalBikeSalesRevenue - (totalBikePurchasesCost + totalGeneralExpenses);
+    const totalOtherIncome = totalManualIncome + totalRegCustomerFees;
+    const totalOutflow = totalBikePurchasesCost + totalGeneralExpenses + totalRegAgentCosts;
+    const totalInflow = totalBikeSalesRevenue + totalOtherIncome;
+    const netCashFlow = totalInflow - totalOutflow;
 
-    // Build Category breakdown for manual expenses
+    const totalGrossProfit = totalBikeGrossProfit + totalRegProfit + totalManualIncome;
+    const netProfit = totalGrossProfit - totalGeneralExpenses;
+
+    // Category breakdown for expenses
     const categoryBreakdownMap = new Map();
-    filteredExpenses.forEach(e => {
+    generalExpensesList.forEach(e => {
       const cat = e.category || "General";
       const amt = parseFloat(e.amount || 0);
       categoryBreakdownMap.set(cat, (categoryBreakdownMap.get(cat) || 0) + amt);
@@ -389,26 +387,28 @@ const getExpenseOverview = async (req, res) => {
       amount
     })).sort((a, b) => b.amount - a.amount);
 
-    // Build unified chronological activity ledger
+    // Chronological General Ledger Entries
     const ledger = [
       ...filteredExpenses.map(e => {
         const d = parseDate(e.expenseDate || e.createdAt);
+        const amt = parseFloat(e.amount || 0);
+        const isInc = e.transactionType === "income";
         return {
           id: e.id,
-          type: "manual_expense",
+          type: isInc ? "manual_income" : "manual_expense",
           date: d ? d.toISOString() : null,
           title: e.title,
           category: e.category || "General",
-          amount: parseFloat(e.amount || 0),
+          amount: amt,
           description: e.description || "",
-          inflow: 0,
-          outflow: parseFloat(e.amount || 0),
-          profit: -parseFloat(e.amount || 0)
+          inflow: isInc ? amt : 0,
+          outflow: isInc ? 0 : amt,
+          profit: isInc ? amt : -amt
         };
       }),
       ...filteredPurchases.map(p => {
         const d = parseDate(p.purchaseDateTime || p.createdAt);
-        const cost = parseFloat(p.actualAmount || 0) + parseFloat(p.additionalExpense || 0);
+        const cost = Math.abs(parseFloat(p.actualAmount || 0) + parseFloat(p.additionalExpense || 0));
         return {
           id: p.id,
           type: "bike_purchase",
@@ -440,7 +440,27 @@ const getExpenseOverview = async (req, res) => {
         profit: s.profit,
         inflow: s.salePrice,
         outflow: 0
-      }))
+      })),
+      ...filteredRegistrations.map(r => {
+        const d = parseDate(r.registrationDateTime || r.createdAt);
+        const customerFee = parseFloat(r.customerTotalMoney || 0);
+        const agentFee = parseFloat(r.agentTotalMoney || 0);
+        const profit = customerFee - agentFee;
+        return {
+          id: r.id,
+          type: "registration",
+          date: d ? d.toISOString() : null,
+          title: `Registration: ${[r.bikeCompany, r.bikeModel].filter(Boolean).join(" ") || r.registrationNo || "Bike"}`,
+          category: "Registration Service",
+          customerName: r.customerName || "—",
+          registrationNo: r.registrationNo || "—",
+          chasisNo: r.chasisNo || "—",
+          amount: customerFee,
+          inflow: customerFee,
+          outflow: agentFee,
+          profit
+        };
+      })
     ];
 
     // Sort unified ledger newest first
@@ -459,17 +479,23 @@ const getExpenseOverview = async (req, res) => {
         totalGeneralExpenses,
         totalBikePurchasesCost,
         totalBikeSalesRevenue,
+        totalOtherIncome,
+        totalRegAgentCosts,
+        totalInflow,
+        totalOutflow,
         totalGrossProfit,
         netProfit,
         netCashFlow,
         expensesCount: filteredExpenses.length,
         purchasesCount: filteredPurchases.length,
-        salesCount: filteredSales.length
+        salesCount: filteredSales.length,
+        registrationsCount: filteredRegistrations.length
       },
       categoryBreakdown,
       expenses: filteredExpenses.sort((a, b) => (parseDate(b.expenseDate || b.createdAt) || 0) - (parseDate(a.expenseDate || a.createdAt) || 0)),
       purchases: filteredPurchases.sort((a, b) => (parseDate(b.purchaseDateTime || b.createdAt) || 0) - (parseDate(a.purchaseDateTime || a.createdAt) || 0)),
       sales: saleListWithProfit.sort((a, b) => (new Date(b.date || 0)) - (new Date(a.date || 0))),
+      registrations: filteredRegistrations,
       ledger
     });
   } catch (error) {
