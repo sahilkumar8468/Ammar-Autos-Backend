@@ -344,8 +344,8 @@ const getExpenseOverview = async (req, res) => {
         cost = parseFloat(matchedPurchase.actualAmount || 0) + parseFloat(matchedPurchase.additionalExpense || 0);
         profit = salePrice - cost;
       } else {
-        cost = 0;
-        profit = salePrice;
+        cost = parseFloat(s.purchaseCost || s.purchasePrice || s.originalPurchasePrice || 0);
+        profit = salePrice - cost;
       }
 
       totalBikeGrossProfit += profit;
