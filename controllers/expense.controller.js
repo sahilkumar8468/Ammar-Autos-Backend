@@ -29,7 +29,7 @@ const parseDate = (val) => {
 
 // In-memory overview cache to protect Firebase from quota exhaustion
 const overviewCache = new Map();
-const CACHE_TTL_MS = 15000;
+const CACHE_TTL_MS = 300000; // 5 minutes TTL
 
 const clearOverviewCache = () => {
   overviewCache.clear();

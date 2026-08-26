@@ -5,7 +5,7 @@
  */
 
 const cacheStore = new Map();
-const DEFAULT_TTL_MS = 60000; // 60 seconds TTL
+const DEFAULT_TTL_MS = 300000; // 5 minutes TTL (Protects 50,000 free reads limit)
 
 const getCached = (key) => {
   const item = cacheStore.get(key);
