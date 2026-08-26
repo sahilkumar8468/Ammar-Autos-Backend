@@ -390,13 +390,14 @@ const getExpenseOverview = async (req, res) => {
     // Chronological General Ledger Entries
     const ledger = [
       ...filteredExpenses.map(e => {
-        const d = parseDate(e.expenseDate || e.createdAt);
+        const d = parseDate(e.expenseDate || e.date || e.createdAt);
         const amt = parseFloat(e.amount || 0);
         const isInc = e.transactionType === "income";
         return {
           id: e.id,
           type: isInc ? "manual_income" : "manual_expense",
-          date: d ? d.toISOString() : null,
+          date: d ? d.toISOString() : (e.expenseDate || e.createdAt || null),
+          expenseDate: e.expenseDate || e.date || e.createdAt || null,
           title: e.title,
           category: e.category || "General",
           amount: amt,
@@ -407,12 +408,13 @@ const getExpenseOverview = async (req, res) => {
         };
       }),
       ...filteredPurchases.map(p => {
-        const d = parseDate(p.purchaseDateTime || p.createdAt);
+        const d = parseDate(p.purchaseDateTime || p.date || p.createdAt);
         const cost = Math.abs(parseFloat(p.actualAmount || 0) + parseFloat(p.additionalExpense || 0));
         return {
           id: p.id,
           type: "bike_purchase",
-          date: d ? d.toISOString() : null,
+          date: d ? d.toISOString() : (p.purchaseDateTime || p.createdAt || null),
+          purchaseDateTime: p.purchaseDateTime || p.date || p.createdAt || null,
           title: `Bike Purchase: ${[p.bikeCompany, p.bikeModel].filter(Boolean).join(" ") || p.registrationNo || "Bike"}`,
           category: "Bike Purchase",
           customerName: p.customerName || "—",
@@ -428,7 +430,7 @@ const getExpenseOverview = async (req, res) => {
       ...saleListWithProfit.map(s => ({
         id: s.id,
         type: "bike_sale",
-        date: s.date,
+        date: s.date || s.saleDateTime || s.createdAt || null,
         title: s.title,
         category: "Bike Sale",
         buyerName: s.buyerName,
@@ -442,14 +444,14 @@ const getExpenseOverview = async (req, res) => {
         outflow: 0
       })),
       ...filteredRegistrations.map(r => {
-        const d = parseDate(r.registrationDateTime || r.createdAt);
+        const d = parseDate(r.registrationDateTime || r.date || r.createdAt);
         const customerFee = parseFloat(r.customerTotalMoney || 0);
         const agentFee = parseFloat(r.agentTotalMoney || 0);
         const profit = customerFee - agentFee;
         return {
           id: r.id,
           type: "registration",
-          date: d ? d.toISOString() : null,
+          date: d ? d.toISOString() : (r.registrationDateTime || r.createdAt || null),
           title: `Registration: ${[r.bikeCompany, r.bikeModel].filter(Boolean).join(" ") || r.registrationNo || "Bike"}`,
           category: "Registration Service",
           customerName: r.customerName || "—",
