@@ -26,6 +26,14 @@ const parseDate = (val) => {
   return null;
 };
 
+// In-memory overview cache to protect Firebase from quota exhaustion
+const overviewCache = new Map();
+const CACHE_TTL_MS = 15000;
+
+const clearOverviewCache = () => {
+  overviewCache.clear();
+};
+
 /**
  * CREATE: Add a new manual daily expense or income (e.g. employee wage, chai, spare parts, utilities)
  * POST /api/expense
@@ -190,6 +198,7 @@ const deleteExpense = async (req, res) => {
     }
 
     await docRef.delete();
+    clearOverviewCache();
 
     return res.status(200).json({
       success: true,
@@ -207,6 +216,12 @@ const deleteExpense = async (req, res) => {
 const getExpenseOverview = async (req, res) => {
   try {
     const { range = "today", startDate, endDate, month, date } = req.query;
+
+    const cacheKey = `${range}_${date || ""}_${month || ""}_${startDate || ""}_${endDate || ""}`;
+    const cached = overviewCache.get(cacheKey);
+    if (cached && (Date.now() - cached.timestamp < CACHE_TTL_MS)) {
+      return res.status(200).json(cached.data);
+    }
 
     const [expensesSnap, purchasesSnap, salesSnap, regSnap] = await Promise.all([
       db.collection("expenses").get(),
@@ -500,7 +515,10 @@ const getExpenseOverview = async (req, res) => {
       sales: saleListWithProfit.sort((a, b) => (new Date(b.date || 0)) - (new Date(a.date || 0))),
       registrations: filteredRegistrations,
       ledger
-    });
+    };
+
+    overviewCache.set(cacheKey, { timestamp: Date.now(), data: payload });
+    return res.status(200).json(payload);
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
   }
