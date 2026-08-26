@@ -487,7 +487,7 @@ const getExpenseOverview = async (req, res) => {
       return dateB - dateA;
     });
 
-    return res.status(200).json({
+    const payload = {
       success: true,
       range,
       filterStart: filterStart ? filterStart.toISOString() : null,
