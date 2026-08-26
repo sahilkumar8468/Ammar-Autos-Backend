@@ -479,6 +479,7 @@ const getExpenseOverview = async (req, res) => {
         totalGeneralExpenses,
         totalBikePurchasesCost,
         totalBikeSalesRevenue,
+        totalBikeGrossProfit,
         totalOtherIncome,
         totalRegAgentCosts,
         totalInflow,
