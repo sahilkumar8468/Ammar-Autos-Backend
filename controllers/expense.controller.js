@@ -1,4 +1,5 @@
 const { db } = require("../config/firebase");
+const { handleControllerError } = require("../utils/apiCache");
 
 /**
  * Normalizes string keys by stripping hyphens, spaces, and non-alphanumeric chars
@@ -520,7 +521,21 @@ const getExpenseOverview = async (req, res) => {
     overviewCache.set(cacheKey, { timestamp: Date.now(), data: payload });
     return res.status(200).json(payload);
   } catch (error) {
-    return res.status(500).json({ success: false, message: error.message });
+    const cachedAny = overviewCache.get(cacheKey);
+    if (cachedAny && cachedAny.data) {
+      return res.status(200).json({ ...cachedAny.data, quotaExhausted: true });
+    }
+    return handleControllerError(error, res, {
+      success: true,
+      range,
+      summary: {},
+      categoryBreakdown: [],
+      expenses: [],
+      purchases: [],
+      sales: [],
+      registrations: [],
+      ledger: []
+    });
   }
 };
 

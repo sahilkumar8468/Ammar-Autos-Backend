@@ -1,5 +1,6 @@
 const { db } = require("../config/firebase");
-const { normalizeRegistration,normalizeChasis,normalizeEngine  } = require("./purchase.controller");
+const { normalizeRegistration, normalizeChasis, normalizeEngine } = require("./purchase.controller");
+const { getFreshCached, setCached, handleControllerError } = require("../utils/apiCache");
 
 const normalizeKey = (str) => {
   if (!str) return "";
@@ -476,8 +477,12 @@ const parseDate = (val) => {
  * GET /api/sale?category=local_customer&month=2026-07&search=LEA-1234
  */
 const getAllSales = async (req, res) => {
+  const { category, month, search, page: pageStr, limit: limitStr } = req.query;
+  const cacheKey = `all_sales_${category || "all"}_${month || "all"}_${search || ""}_${pageStr || 1}_${limitStr || 50}`;
+  const cached = getFreshCached(cacheKey, 30000);
+  if (cached) return res.status(200).json(cached);
+
   try {
-    const { category, month, search, page: pageStr, limit: limitStr } = req.query;
     let query = db.collection("sales");
 
     if (category && SALE_CATEGORIES.includes(category)) {
@@ -531,14 +536,17 @@ const getAllSales = async (req, res) => {
       paged = sales.slice(start, start + limit);
     }
 
-    return res.status(200).json({
+    const payload = {
       success: true,
       count: paged.length,
       totalCount,
       data: paged
-    });
+    };
+
+    setCached(cacheKey, payload);
+    return res.status(200).json(payload);
   } catch (error) {
-    return res.status(500).json({ success: false, message: error.message });
+    return handleControllerError(error, res, { success: true, count: 0, totalCount: 0, data: [] });
   }
 };
 
@@ -547,9 +555,12 @@ const getAllSales = async (req, res) => {
  * GET /api/sale/stats?month=2026-07
  */
 const getSaleStats = async (req, res) => {
-  try {
-    const { month, category } = req.query;
+  const { month, category } = req.query;
+  const cacheKey = `sale_stats_${month || "all"}_${category || "all"}`;
+  const cached = getFreshCached(cacheKey, 30000);
+  if (cached) return res.status(200).json(cached);
 
+  try {
     let collectionRef = db.collection("sales");
     if (category && SALE_CATEGORIES.includes(category)) {
       collectionRef = collectionRef.where("category", "==", category);
@@ -579,14 +590,17 @@ const getSaleStats = async (req, res) => {
       }
     });
 
-    return res.status(200).json({
+    const payload = {
       success: true,
       month: month || "all",
       bikesSold,
       revenue
-    });
+    };
+
+    setCached(cacheKey, payload);
+    return res.status(200).json(payload);
   } catch (error) {
-    return res.status(500).json({ success: false, message: error.message });
+    return handleControllerError(error, res, { success: true, month: month || "all", bikesSold: 0, revenue: 0 });
   }
 };
 
