@@ -275,6 +275,13 @@ const createSale = async (req, res) => {
       });
     }
 
+    if (saleDateTime && new Date(saleDateTime) > new Date()) {
+      return res.status(400).json({
+        success: false,
+        message: "Sale date cannot be in the future."
+      });
+    }
+
     if (!buyerName || !buyerCnic) {
       return res.status(400).json({
         success: false,
@@ -787,6 +794,13 @@ const updateSale = async (req, res) => {
 
     if (!doc.exists) {
       return res.status(404).json({ success: false, message: "Sale record not found" });
+    }
+
+    if (updateData.saleDateTime && new Date(updateData.saleDateTime) > new Date()) {
+      return res.status(400).json({
+        success: false,
+        message: "Sale date cannot be in the future."
+      });
     }
 
     if (updateData.totalSaleAmount !== undefined) updateData.totalSaleAmount = parseFloat(updateData.totalSaleAmount) || 0;

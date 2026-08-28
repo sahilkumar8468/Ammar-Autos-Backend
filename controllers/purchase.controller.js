@@ -69,6 +69,13 @@ const createPurchase = async (req, res) => {
       });
     }
 
+    if (purchaseDate && new Date(purchaseDate) > new Date()) {
+      return res.status(400).json({
+        success: false,
+        message: "Purchase date cannot be in the future."
+      });
+    }
+
     const { registrationNo: normalizedRegNo, registrationStatus } = normalizeRegistration(registrationNo);
     const { chasisNo: normalizedChasisNo, chasisStatus } = normalizeChasis(chasisNo);
     const { engineNo: normalizedEngineNo, engineStatus } = normalizeEngine(engineNo);
@@ -286,7 +293,15 @@ const updatePurchase = async (req, res) => {
     if (updateData.actualAmount) updateData.actualAmount = parseFloat(updateData.actualAmount);
     if (updateData.amountRemaining) updateData.amountRemaining = parseFloat(updateData.amountRemaining);
     if (updateData.additionalExpense) updateData.additionalExpense = parseFloat(updateData.additionalExpense);
-    if (updateData.purchaseDate) updateData.purchaseDateTime = new Date(updateData.purchaseDate);
+    if (updateData.purchaseDate) {
+      if (new Date(updateData.purchaseDate) > new Date()) {
+        return res.status(400).json({
+          success: false,
+          message: "Purchase date cannot be in the future."
+        });
+      }
+      updateData.purchaseDateTime = new Date(updateData.purchaseDate);
+    }
 
     if (updateData.registrationNo !== undefined) {
       const { registrationNo, registrationStatus } = normalizeRegistration(updateData.registrationNo);
