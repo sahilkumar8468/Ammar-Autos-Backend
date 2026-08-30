@@ -489,8 +489,9 @@ const parseDate = (val) => {
  * GET /api/sale?category=local_customer&month=2026-07&search=LEA-1234
  */
 const getAllSales = async (req, res) => {
-  const { category, month, search, page: pageStr, limit: limitStr } = req.query;
-  const cacheKey = `all_sales_${category || "all"}_${month || "all"}_${search || ""}_${pageStr || 1}_${limitStr || 50}`;
+  const { category, month, startDate, endDate, search, page: pageStr, limit: limitStr } = req.query;
+  const isAll = limitStr === "all" || limitStr === "0" || req.query.all === "true";
+  const cacheKey = `all_sales_${category || "all"}_${month || "all"}_${startDate || ""}_${endDate || ""}_${search || ""}_${pageStr || 1}_${limitStr || 50}`;
   const cached = getFreshCached(cacheKey, 30000);
   if (cached) return res.status(200).json(cached);
 
@@ -518,6 +519,21 @@ const getAllSales = async (req, res) => {
       });
     }
 
+    // Date range filter
+    if (startDate || endDate) {
+      sales = sales.filter(s => {
+        const d = parseDate(s.saleDateTime || s.createdAt);
+        if (!d) return false;
+        if (startDate && d < new Date(startDate)) return false;
+        if (endDate) {
+          const end = new Date(endDate);
+          end.setHours(23, 59, 59, 999);
+          if (d > end) return false;
+        }
+        return true;
+      });
+    }
+
     // Sort in JS (newest first)
     sales.sort((a, b) => {
       const dateA = parseDate(a.saleDateTime || a.createdAt) || new Date(0);
@@ -541,7 +557,7 @@ const getAllSales = async (req, res) => {
     const totalCount = sales.length;
 
     let paged = sales;
-    if (pageStr || limitStr) {
+    if (!isAll && (pageStr || limitStr)) {
       const page = Math.max(1, parseInt(pageStr) || 1);
       const limit = Math.min(500, Math.max(1, parseInt(limitStr) || 50));
       const start = (page - 1) * limit;

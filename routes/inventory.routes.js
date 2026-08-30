@@ -12,8 +12,11 @@ const normalizeKey = (str) => {
 // GET /api/inventory - returns unsold bikes inventory and summary stats (paginated)
 router.get("/", async (req, res) => {
   try {
+    const isAll = req.query.all === "true" || req.query.limit === "all";
     const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 10;
+    const limit = isAll ? 10000 : (parseInt(req.query.limit) || 10);
+    const startDate = req.query.startDate;
+    const endDate = req.query.endDate;
 
     const [purchasesSnap, salesSnap] = await Promise.all([
       db.collection("purchases").get(),
@@ -63,20 +66,36 @@ router.get("/", async (req, res) => {
       }
     });
 
-    const total = unsoldPurchases.length;
+    let filteredUnsold = unsoldPurchases;
+    if (startDate || endDate) {
+      filteredUnsold = unsoldPurchases.filter(p => {
+        const pSec = p.purchaseDateTime?._seconds || p.purchaseDateTime?.seconds;
+        const pDate = pSec ? new Date(pSec * 1000) : (p.purchaseDateTime || p.purchaseDate ? new Date(p.purchaseDateTime || p.purchaseDate) : (p.createdAt ? new Date(p.createdAt) : null));
+        if (!pDate || isNaN(pDate.getTime())) return true;
+        if (startDate && pDate < new Date(startDate)) return false;
+        if (endDate) {
+          const end = new Date(endDate);
+          end.setHours(23, 59, 59, 999);
+          if (pDate > end) return false;
+        }
+        return true;
+      });
+    }
+
+    const total = filteredUnsold.length;
     const totalPurchased = total;
-    const totalPurchaseValue = unsoldPurchases.reduce((sum, p) => sum + (Number(p.actualAmount) || 0), 0);
-    const remainingBalance = unsoldPurchases.reduce((sum, p) => sum + (Number(p.amountRemaining) || 0), 0);
+    const totalPurchaseValue = filteredUnsold.reduce((sum, p) => sum + (Number(p.actualAmount) || 0), 0);
+    const remainingBalance = filteredUnsold.reduce((sum, p) => sum + (Number(p.amountRemaining) || 0), 0);
 
     // Sort and paginate in-memory (avoids Firestore composite index requirement)
-    unsoldPurchases.sort((a, b) => {
+    filteredUnsold.sort((a, b) => {
       const dateA = a.purchaseDateTime?._seconds || a.purchaseDateTime?.seconds || (a.createdAt ? new Date(a.createdAt).getTime() / 1000 : 0) || 0;
       const dateB = b.purchaseDateTime?._seconds || b.purchaseDateTime?.seconds || (b.createdAt ? new Date(b.createdAt).getTime() / 1000 : 0) || 0;
       return dateB - dateA;
     });
 
     const offset = (page - 1) * limit;
-    const paginatedData = unsoldPurchases.slice(offset, offset + limit);
+    const paginatedData = isAll ? filteredUnsold : filteredUnsold.slice(offset, offset + limit);
 
     return res.json({
       success: true,
