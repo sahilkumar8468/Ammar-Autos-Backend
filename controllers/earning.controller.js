@@ -29,20 +29,17 @@ const getEarningStats = async (req, res) => {
       db.collection("registrations").get()
     ]);
 
-    const purchases = purchasesSnap.docs.map((doc) => ({
-      id: doc.id,
-      ...doc.data()
-    }));
+    const purchases = purchasesSnap.docs
+      .map((doc) => ({ id: doc.id, ...doc.data() }))
+      .filter((p) => !p.isDeleted);
 
-    const sales = salesSnap.docs.map((doc) => ({
-      id: doc.id,
-      ...doc.data()
-    }));
+    const sales = salesSnap.docs
+      .map((doc) => ({ id: doc.id, ...doc.data() }))
+      .filter((s) => !s.isDeleted);
 
-    const registrations = regSnap.docs.map((doc) => ({
-      id: doc.id,
-      ...doc.data()
-    }));
+    const registrations = regSnap.docs
+      .map((doc) => ({ id: doc.id, ...doc.data() }))
+      .filter((r) => !r.isDeleted);
 
     // Build multi-layer lookup maps for 100% accurate purchase matching
     const purchaseById = new Map();

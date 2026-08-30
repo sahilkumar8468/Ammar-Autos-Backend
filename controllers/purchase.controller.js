@@ -91,9 +91,9 @@ const createPurchase = async (req, res) => {
         .collection("purchases")
         .where("registrationNo", "==", normalizedRegNo)
         .where("sold", "==", false)
-        .limit(1)
         .get();
-      if (!existing.empty) {
+      const activeExisting = existing.docs.find(d => !d.data().isDeleted);
+      if (activeExisting) {
         return res.status(409).json({
           success: false,
           message: `A bike with registration number "${normalizedRegNo}" is already in active inventory/stock.`
@@ -165,7 +165,10 @@ const getAllPurchases = async (req, res) => {
     const snapshot = await collectionRef.orderBy("createdAt", "desc").get();
     const allPurchases = [];
     snapshot.forEach(doc => {
-      allPurchases.push({ id: doc.id, ...doc.data() });
+      const data = doc.data();
+      if (!data.isDeleted) {
+        allPurchases.push({ id: doc.id, ...data });
+      }
     });
 
     // Apply filters if provided (case‑insensitive contains)
@@ -209,7 +212,7 @@ const getPurchaseById = async (req, res) => {
     const { id } = req.params;
     const doc = await db.collection("purchases").doc(id).get();
 
-    if (!doc.exists) {
+    if (!doc.exists || doc.data()?.isDeleted) {
       return res.status(404).json({ success: false, message: "Purchase record not found" });
     }
 
@@ -246,33 +249,31 @@ const lookupPurchaseByRegistration = async (req, res) => {
       .collection("purchases")
       .where("registrationNo", "==", normalizedRegNo)
       .where("sold", "==", false)
-      .limit(1)
       .get();
 
-    if (!snapshot.empty) {
-      const doc = snapshot.docs[0];
+    const activeDoc = snapshot.docs.find(d => !d.data().isDeleted);
+    if (activeDoc) {
       return res.status(200).json({
         success: true,
         found: true,
-        data: { id: doc.id, ...doc.data() }
+        data: { id: activeDoc.id, ...activeDoc.data() }
       });
     }
 
     const anySnapshot = await db
       .collection("purchases")
       .where("registrationNo", "==", normalizedRegNo)
-      .limit(1)
       .get();
 
-    if (anySnapshot.empty) {
+    const anyActiveDoc = anySnapshot.docs.find(d => !d.data().isDeleted);
+    if (!anyActiveDoc) {
       return res.status(200).json({ success: true, found: false });
     }
 
-    const doc = anySnapshot.docs[0];
     return res.status(200).json({
       success: true,
       found: true,
-      data: { id: doc.id, ...doc.data() }
+      data: { id: anyActiveDoc.id, ...anyActiveDoc.data() }
     });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
@@ -383,11 +384,14 @@ const deletePurchase = async (req, res) => {
     const docRef = db.collection("purchases").doc(id);
     const doc = await docRef.get();
 
-    if (!doc.exists) {
+    if (!doc.exists || doc.data()?.isDeleted) {
       return res.status(404).json({ success: false, message: "Purchase record not found" });
     }
 
-    await docRef.delete();
+    await docRef.update({
+      isDeleted: true,
+      deletedAt: new Date()
+    });
 
     return res.status(200).json({
       success: true,

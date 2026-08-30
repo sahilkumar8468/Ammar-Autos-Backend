@@ -506,7 +506,10 @@ const getAllSales = async (req, res) => {
 
     let sales = [];
     snapshot.forEach(doc => {
-      sales.push({ id: doc.id, ...doc.data() });
+      const data = doc.data();
+      if (!data.isDeleted) {
+        sales.push({ id: doc.id, ...data });
+      }
     });
 
     // In-memory month filter to prevent Firestore missing composite index 500 errors
@@ -600,6 +603,7 @@ const getSaleStats = async (req, res) => {
     let revenue = 0;
     snapshot.forEach(doc => {
       const sale = doc.data();
+      if (sale.isDeleted) return;
       let matchMonth = true;
 
       if (month && /^\d{4}-\d{2}$/.test(month)) {
@@ -641,7 +645,7 @@ const getSaleById = async (req, res) => {
     const { id } = req.params;
     const doc = await db.collection("sales").doc(id).get();
 
-    if (!doc.exists) {
+    if (!doc.exists || doc.data()?.isDeleted) {
       return res.status(404).json({ success: false, message: "Sale record not found" });
     }
 
@@ -961,12 +965,15 @@ const deleteSale = async (req, res) => {
     const docRef = db.collection("sales").doc(id);
     const doc = await docRef.get();
 
-    if (!doc.exists) {
+    if (!doc.exists || doc.data()?.isDeleted) {
       return res.status(404).json({ success: false, message: "Sale record not found" });
     }
 
     const sale = doc.data();
-    await docRef.delete();
+    await docRef.update({
+      isDeleted: true,
+      deletedAt: new Date()
+    });
 
     // Free up the bike again if this sale had claimed a purchase record.
     if (sale.linkedPurchaseId) {

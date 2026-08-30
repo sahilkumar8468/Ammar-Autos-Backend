@@ -94,7 +94,10 @@ const getAllExpenses = async (req, res) => {
     const snapshot = await query.get();
     let expenses = [];
     snapshot.forEach(doc => {
-      expenses.push({ id: doc.id, ...doc.data() });
+      const data = doc.data();
+      if (!data.isDeleted) {
+        expenses.push({ id: doc.id, ...data });
+      }
     });
 
     if (month && /^\d{4}-\d{2}$/.test(month)) {
@@ -194,11 +197,14 @@ const deleteExpense = async (req, res) => {
     const docRef = db.collection("expenses").doc(id);
     const doc = await docRef.get();
 
-    if (!doc.exists) {
+    if (!doc.exists || doc.data()?.isDeleted) {
       return res.status(404).json({ success: false, message: "Expense record not found" });
     }
 
-    await docRef.delete();
+    await docRef.update({
+      isDeleted: true,
+      deletedAt: new Date()
+    });
     clearOverviewCache();
 
     return res.status(200).json({
@@ -231,10 +237,10 @@ const getExpenseOverview = async (req, res) => {
       db.collection("registrations").get()
     ]);
 
-    const expenses = expensesSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-    const purchases = purchasesSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-    const sales = salesSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-    const registrations = regSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    const expenses = expensesSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })).filter(e => !e.isDeleted);
+    const purchases = purchasesSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })).filter(p => !p.isDeleted);
+    const sales = salesSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })).filter(s => !s.isDeleted);
+    const registrations = regSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })).filter(r => !r.isDeleted);
 
     // Build multi-layer lookup maps for purchases to compute accurate gross profit on sales
     const purchaseById = new Map();

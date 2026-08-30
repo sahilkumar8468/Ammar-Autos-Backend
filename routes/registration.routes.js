@@ -11,12 +11,11 @@ router.get("/search-bike", async (req, res) => {
     const field = searchType === "registrationNo" ? "registrationNo" : "chasisNo";
     const snapshot = await db.collection("purchases")
       .where(field, "==", searchValue.trim())
-      .limit(1)
       .get();
       
-    if (snapshot.empty) return res.json({ success: true, found: false });
+    const doc = snapshot.docs.find(d => !d.data().isDeleted);
+    if (!doc) return res.json({ success: true, found: false });
     
-    const doc = snapshot.docs[0];
     return res.json({ success: true, found: true, data: { id: doc.id, ...doc.data() } });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
@@ -27,7 +26,7 @@ router.get("/search-bike", async (req, res) => {
 router.get("/", async (req, res) => {
   try {
     const snapshot = await db.collection("registrations").get();
-    const list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    const list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })).filter(r => !r.isDeleted);
     return res.json({ success: true, data: list });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
@@ -131,9 +130,12 @@ router.delete("/:id", async (req, res) => {
     const { id } = req.params;
     const docRef = db.collection("registrations").doc(id);
     const doc = await docRef.get();
-    if (!doc.exists) return res.status(404).json({ success: false, message: "Registration record not found" });
+    if (!doc.exists || doc.data()?.isDeleted) return res.status(404).json({ success: false, message: "Registration record not found" });
 
-    await docRef.delete();
+    await docRef.update({
+      isDeleted: true,
+      deletedAt: new Date()
+    });
     return res.json({ success: true, message: "Registration deleted successfully" });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });

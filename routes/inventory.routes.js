@@ -23,8 +23,8 @@ router.get("/", async (req, res) => {
       db.collection("sales").get()
     ]);
 
-    const purchases = purchasesSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-    const sales = salesSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    const purchases = purchasesSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })).filter(p => !p.isDeleted);
+    const sales = salesSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })).filter(s => !s.isDeleted);
 
     const soldLinkedPurchaseIds = new Set();
     const soldRegSet = new Set();

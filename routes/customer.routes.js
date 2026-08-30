@@ -12,7 +12,7 @@ router.get("/", async (req, res) => {
 
     salesSnap.docs.forEach((doc) => {
       const d = doc.data();
-      if (!d.buyerName) return;
+      if (!d.buyerName || d.isDeleted) return;
 
       let isOverdue = false;
       let overdueMonths = 0;
