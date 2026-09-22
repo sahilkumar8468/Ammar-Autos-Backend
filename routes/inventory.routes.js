@@ -26,12 +26,26 @@ router.get("/", async (req, res) => {
     const purchases = purchasesSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })).filter(p => !p.isDeleted);
     const sales = salesSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })).filter(s => !s.isDeleted);
 
+    // Identify returned sale IDs from both sale flags and return purchase records
+    const returnedSaleIds = new Set();
+    sales.forEach(s => {
+      if (s.isReturned) returnedSaleIds.add(s.id);
+    });
+    purchases.forEach(p => {
+      if (p.isReturn && p.previousSaleId) {
+        returnedSaleIds.add(p.previousSaleId);
+      }
+    });
+
     const soldLinkedPurchaseIds = new Set();
     const soldRegSet = new Set();
     const soldChasisSet = new Set();
     const soldEngineSet = new Set();
 
     sales.forEach(s => {
+      // Returned sales do not hold a bike as sold in active inventory
+      if (s.isReturned || returnedSaleIds.has(s.id)) return;
+
       if (s.linkedPurchaseId) soldLinkedPurchaseIds.add(s.linkedPurchaseId);
       const reg = normalizeKey(s.registrationNo);
       if (reg) soldRegSet.add(reg);
@@ -48,13 +62,16 @@ router.get("/", async (req, res) => {
       const chasisKey = normalizeKey(p.chasisNo);
       const engineKey = normalizeKey(p.engineNo);
 
+      const hasActiveSoldSale = p.soldSaleId && !returnedSaleIds.has(p.soldSaleId);
+
       const isSold =
-        p.sold === true ||
-        !!p.soldSaleId ||
-        soldLinkedPurchaseIds.has(p.id) ||
-        (regKey && soldRegSet.has(regKey)) ||
-        (chasisKey && soldChasisSet.has(chasisKey)) ||
-        (engineKey && soldEngineSet.has(engineKey));
+        p.sold === true && !p.isReturn
+          ? true
+          : (hasActiveSoldSale ||
+             soldLinkedPurchaseIds.has(p.id) ||
+             (regKey && soldRegSet.has(regKey)) ||
+             (chasisKey && soldChasisSet.has(chasisKey)) ||
+             (engineKey && soldEngineSet.has(engineKey)));
 
       if (isSold) {
         // Auto-heal purchase record if it was not marked as sold
@@ -62,6 +79,11 @@ router.get("/", async (req, res) => {
           db.collection("purchases").doc(p.id).update({ sold: true, updatedAt: new Date() }).catch(() => {});
         }
       } else {
+        // If a return purchase was previously erroneously marked sold, unmark it
+        if (p.sold && p.isReturn && !hasActiveSoldSale && !soldLinkedPurchaseIds.has(p.id)) {
+          p.sold = false;
+          db.collection("purchases").doc(p.id).update({ sold: false, soldSaleId: null, updatedAt: new Date() }).catch(() => {});
+        }
         unsoldPurchases.push(p);
       }
     });

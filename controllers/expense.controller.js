@@ -245,19 +245,28 @@ const getExpenseOverview = async (req, res) => {
     // Build multi-layer lookup maps for purchases to compute accurate gross profit on sales
     const purchaseById = new Map();
     const purchaseBySoldSaleId = new Map();
-    const purchaseByReg = new Map();
-    const purchaseByChasis = new Map();
-    const purchaseByEngine = new Map();
+    const purchasesByReg = new Map();
+    const purchasesByChasis = new Map();
+    const purchasesByEngine = new Map();
 
     purchases.forEach(p => {
       purchaseById.set(p.id, p);
       if (p.soldSaleId) purchaseBySoldSaleId.set(p.soldSaleId, p);
       const regKey = normalizeKey(p.registrationNo);
-      if (regKey) purchaseByReg.set(regKey, p);
+      if (regKey) {
+        if (!purchasesByReg.has(regKey)) purchasesByReg.set(regKey, []);
+        purchasesByReg.get(regKey).push(p);
+      }
       const chasisKey = normalizeKey(p.chasisNo);
-      if (chasisKey) purchaseByChasis.set(chasisKey, p);
+      if (chasisKey) {
+        if (!purchasesByChasis.has(chasisKey)) purchasesByChasis.set(chasisKey, []);
+        purchasesByChasis.get(chasisKey).push(p);
+      }
       const engineKey = normalizeKey(p.engineNo);
-      if (engineKey) purchaseByEngine.set(engineKey, p);
+      if (engineKey) {
+        if (!purchasesByEngine.has(engineKey)) purchasesByEngine.set(engineKey, []);
+        purchasesByEngine.get(engineKey).push(p);
+      }
     });
 
     // Date range boundaries
@@ -350,23 +359,39 @@ const getExpenseOverview = async (req, res) => {
         matchedPurchase = purchaseBySoldSaleId.get(s.id);
       } else if (s.linkedPurchaseId && purchaseById.has(s.linkedPurchaseId)) {
         matchedPurchase = purchaseById.get(s.linkedPurchaseId);
-      } else if (chasisKey && purchaseByChasis.has(chasisKey)) {
-        matchedPurchase = purchaseByChasis.get(chasisKey);
-      } else if (engineKey && purchaseByEngine.has(engineKey)) {
-        matchedPurchase = purchaseByEngine.get(engineKey);
-      } else if (regKey && purchaseByReg.has(regKey)) {
-        matchedPurchase = purchaseByReg.get(regKey);
+      } else {
+        const candidates = (regKey && purchasesByReg.get(regKey)) ||
+                           (chasisKey && purchasesByChasis.get(chasisKey)) ||
+                           (engineKey && purchasesByEngine.get(engineKey)) || [];
+        if (candidates.length === 1) {
+          matchedPurchase = candidates[0];
+        } else if (candidates.length > 1) {
+          const sTime = sDate ? sDate.getTime() : 0;
+          const sorted = [...candidates].sort((a, b) => {
+            const tA = parseDate(a.purchaseDateTime || a.createdAt)?.getTime() || 0;
+            const tB = parseDate(b.purchaseDateTime || b.createdAt)?.getTime() || 0;
+            return tB - tA;
+          });
+          const appropriate = sorted.find((p) => {
+            const pTime = parseDate(p.purchaseDateTime || p.createdAt)?.getTime() || 0;
+            return !sTime || pTime <= sTime + 86400000;
+          });
+          matchedPurchase = appropriate || sorted[0];
+        }
       }
 
       const salePrice = parseFloat(s.totalSaleAmount || 0);
       let cost = 0;
       let profit = 0;
 
-      if (matchedPurchase) {
+      if (s.purchaseCost !== undefined && s.purchaseCost !== null && !isNaN(s.purchaseCost) && Number(s.purchaseCost) > 0) {
+        cost = parseFloat(s.purchaseCost);
+        profit = salePrice - cost;
+      } else if (matchedPurchase) {
         cost = parseFloat(matchedPurchase.actualAmount || 0) + parseFloat(matchedPurchase.additionalExpense || 0);
         profit = salePrice - cost;
       } else {
-        cost = parseFloat(s.purchaseCost || s.purchasePrice || s.originalPurchasePrice || 0);
+        cost = parseFloat(s.purchasePrice || s.originalPurchasePrice || 0);
         profit = salePrice - cost;
       }
 

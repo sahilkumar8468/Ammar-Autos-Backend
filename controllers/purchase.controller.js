@@ -86,7 +86,7 @@ const createPurchase = async (req, res) => {
     const { engineNo: normalizedEngineNo, engineStatus } = normalizeEngine(engineNo);
 
     // If a real (non-AFR) registration number is given, check if an unsold instance is already in stock
-    if (registrationStatus === "registered") {
+    if (registrationStatus === "registered" && !isReturn) {
       const existing = await db
         .collection("purchases")
         .where("registrationNo", "==", normalizedRegNo)
@@ -135,6 +135,16 @@ const createPurchase = async (req, res) => {
     };
 
     const docRef = await db.collection("purchases").add(purchaseData);
+
+    // If this purchase is a return / buy-back, update the previous sale record
+    if (isReturn && previousSaleId) {
+      await db.collection("sales").doc(previousSaleId).update({
+        isReturned: true,
+        returnPurchaseId: docRef.id,
+        returnDate: purchaseData.purchaseDateTime,
+        updatedAt: new Date()
+      }).catch((e) => console.error("Error marking previous sale as returned:", e));
+    }
 
     return res.status(201).json({
       success: true,

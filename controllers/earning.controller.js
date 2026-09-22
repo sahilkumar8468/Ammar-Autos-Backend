@@ -44,9 +44,9 @@ const getEarningStats = async (req, res) => {
     // Build multi-layer lookup maps for 100% accurate purchase matching
     const purchaseById = new Map();
     const purchaseBySoldSaleId = new Map();
-    const purchaseByReg = new Map();
-    const purchaseByChasis = new Map();
-    const purchaseByEngine = new Map();
+    const purchasesByReg = new Map();
+    const purchasesByChasis = new Map();
+    const purchasesByEngine = new Map();
 
     purchases.forEach((p) => {
       purchaseById.set(p.id, p);
@@ -55,13 +55,30 @@ const getEarningStats = async (req, res) => {
       }
 
       const regKey = normalizeKey(p.registrationNo);
-      if (regKey) purchaseByReg.set(regKey, p);
+      if (regKey) {
+        if (!purchasesByReg.has(regKey)) purchasesByReg.set(regKey, []);
+        purchasesByReg.get(regKey).push(p);
+      }
 
       const chasisKey = normalizeKey(p.chasisNo);
-      if (chasisKey) purchaseByChasis.set(chasisKey, p);
+      if (chasisKey) {
+        if (!purchasesByChasis.has(chasisKey)) purchasesByChasis.set(chasisKey, []);
+        purchasesByChasis.get(chasisKey).push(p);
+      }
 
       const engineKey = normalizeKey(p.engineNo);
-      if (engineKey) purchaseByEngine.set(engineKey, p);
+      if (engineKey) {
+        if (!purchasesByEngine.has(engineKey)) purchasesByEngine.set(engineKey, []);
+        purchasesByEngine.get(engineKey).push(p);
+      }
+    });
+
+    const returnedSaleIds = new Set();
+    sales.forEach((s) => {
+      if (s.isReturned) returnedSaleIds.add(s.id);
+    });
+    purchases.forEach((p) => {
+      if (p.isReturn && p.previousSaleId) returnedSaleIds.add(p.previousSaleId);
     });
 
     const soldLinkedPurchaseIds = new Set();
@@ -70,6 +87,7 @@ const getEarningStats = async (req, res) => {
     const soldEngineSet = new Set();
 
     sales.forEach((s) => {
+      if (s.isReturned || returnedSaleIds.has(s.id)) return;
       if (s.linkedPurchaseId) soldLinkedPurchaseIds.add(s.linkedPurchaseId);
       const reg = normalizeKey(s.registrationNo);
       if (reg) soldRegSet.add(reg);
@@ -85,13 +103,16 @@ const getEarningStats = async (req, res) => {
       const chasisKey = normalizeKey(p.chasisNo);
       const engineKey = normalizeKey(p.engineNo);
 
+      const hasActiveSoldSale = p.soldSaleId && !returnedSaleIds.has(p.soldSaleId);
+
       const isSold =
-        p.sold === true ||
-        !!p.soldSaleId ||
-        soldLinkedPurchaseIds.has(p.id) ||
-        (regKey && soldRegSet.has(regKey)) ||
-        (chasisKey && soldChasisSet.has(chasisKey)) ||
-        (engineKey && soldEngineSet.has(engineKey));
+        p.sold === true && !p.isReturn
+          ? true
+          : (hasActiveSoldSale ||
+             soldLinkedPurchaseIds.has(p.id) ||
+             (regKey && soldRegSet.has(regKey)) ||
+             (chasisKey && soldChasisSet.has(chasisKey)) ||
+             (engineKey && soldEngineSet.has(engineKey)));
 
       return !isSold;
     });
@@ -189,12 +210,25 @@ const getEarningStats = async (req, res) => {
         matchedPurchase = purchaseBySoldSaleId.get(s.id);
       } else if (s.linkedPurchaseId && purchaseById.has(s.linkedPurchaseId)) {
         matchedPurchase = purchaseById.get(s.linkedPurchaseId);
-      } else if (chasisKey && purchaseByChasis.has(chasisKey)) {
-        matchedPurchase = purchaseByChasis.get(chasisKey);
-      } else if (engineKey && purchaseByEngine.has(engineKey)) {
-        matchedPurchase = purchaseByEngine.get(engineKey);
-      } else if (regKey && purchaseByReg.has(regKey)) {
-        matchedPurchase = purchaseByReg.get(regKey);
+      } else {
+        const candidates = (regKey && purchasesByReg.get(regKey)) ||
+                           (chasisKey && purchasesByChasis.get(chasisKey)) ||
+                           (engineKey && purchasesByEngine.get(engineKey)) || [];
+        if (candidates.length === 1) {
+          matchedPurchase = candidates[0];
+        } else if (candidates.length > 1) {
+          const sTime = sDate ? sDate.getTime() : 0;
+          const sorted = [...candidates].sort((a, b) => {
+            const tA = helperGetDate(a.purchaseDateTime)?.getTime() || helperGetDate(a.createdAt)?.getTime() || 0;
+            const tB = helperGetDate(b.purchaseDateTime)?.getTime() || helperGetDate(b.createdAt)?.getTime() || 0;
+            return tB - tA;
+          });
+          const appropriate = sorted.find((p) => {
+            const pTime = helperGetDate(p.purchaseDateTime)?.getTime() || helperGetDate(p.createdAt)?.getTime() || 0;
+            return !sTime || pTime <= sTime + 86400000;
+          });
+          matchedPurchase = appropriate || sorted[0];
+        }
       }
 
       const salePrice = parseFloat(s.totalSaleAmount || 0);
@@ -202,7 +236,13 @@ const getEarningStats = async (req, res) => {
       let profit = 0;
       let hasMatchedPurchase = false;
 
-      if (matchedPurchase) {
+      if (s.purchaseCost !== undefined && s.purchaseCost !== null && !isNaN(s.purchaseCost) && Number(s.purchaseCost) > 0) {
+        purchaseCost = parseFloat(s.purchaseCost);
+        hasMatchedPurchase = true;
+        matchedSalesCount += 1;
+        profit = salePrice - purchaseCost;
+        totalBikeSalesProfit += profit;
+      } else if (matchedPurchase) {
         hasMatchedPurchase = true;
         matchedSalesCount += 1;
         purchaseCost = parseFloat(matchedPurchase.actualAmount || 0) + parseFloat(matchedPurchase.additionalExpense || 0);

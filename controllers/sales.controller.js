@@ -35,27 +35,55 @@ const lookupBikeByChasis = async (req, res) => {
       .collection("purchases")
       .where("chasisNo", "==", normalizedChasisNo)
       .where("sold", "==", false)
-      .limit(1)
       .get();
+
+    const activeUnsoldDocs = unsoldSnap.docs.filter((d) => !d.data().isDeleted);
 
     let purchaseDoc = null;
     let isSold = false;
 
-    if (!unsoldSnap.empty) {
-      purchaseDoc = unsoldSnap.docs[0];
+    if (activeUnsoldDocs.length > 0) {
+      activeUnsoldDocs.sort((a, b) => {
+        const tA = a.data().purchaseDateTime?.seconds || (a.data().createdAt ? new Date(a.data().createdAt).getTime() / 1000 : 0) || 0;
+        const tB = b.data().purchaseDateTime?.seconds || (b.data().createdAt ? new Date(b.data().createdAt).getTime() / 1000 : 0) || 0;
+        return tB - tA;
+      });
+      purchaseDoc = activeUnsoldDocs[0];
       isSold = false;
     } else {
       const anySnap = await db
         .collection("purchases")
         .where("chasisNo", "==", normalizedChasisNo)
-        .limit(1)
         .get();
 
-      if (anySnap.empty) {
+      const activeAnyDocs = anySnap.docs.filter((d) => !d.data().isDeleted);
+
+      if (activeAnyDocs.length === 0) {
         return res.status(200).json({ success: true, found: false });
       }
-      purchaseDoc = anySnap.docs[0];
-      isSold = true;
+
+      // Check if there is a return purchase among them that was wrongly marked sold
+      const returnDoc = activeAnyDocs.find((d) => d.data().isReturn);
+      if (returnDoc) {
+        const soldSaleId = returnDoc.data().soldSaleId;
+        let isActuallySold = false;
+        if (soldSaleId) {
+          const sDoc = await db.collection("sales").doc(soldSaleId).get();
+          if (sDoc.exists && !sDoc.data().isReturned && !sDoc.data().isDeleted) {
+            isActuallySold = true;
+          }
+        }
+        if (!isActuallySold) {
+          purchaseDoc = returnDoc;
+          isSold = false;
+          db.collection("purchases").doc(returnDoc.id).update({ sold: false, soldSaleId: null, updatedAt: new Date() }).catch(() => {});
+        }
+      }
+
+      if (!purchaseDoc) {
+        purchaseDoc = activeAnyDocs[0];
+        isSold = true;
+      }
     }
 
     const purchase = purchaseDoc.data();
@@ -69,12 +97,15 @@ const lookupBikeByChasis = async (req, res) => {
       });
     }
 
+    const purchaseCost = parseFloat(purchase.actualAmount || 0) + parseFloat(purchase.additionalExpense || 0);
+
     return res.status(200).json({
       success: true,
       found: true,
       alreadySold: false,
       purchaseId: purchaseDoc.id,
       purchaseCategory: purchase.category || "local_customer",
+      purchaseCost,
       data: {
         bikeCompany: purchase.bikeCompany || "",
         bikeModel: purchase.bikeModel || "",
@@ -82,10 +113,14 @@ const lookupBikeByChasis = async (req, res) => {
         engineNo: purchase.engineNo || "",
         registrationNo: purchase.registrationNo || "",
         registrationStatus: purchase.registrationStatus || "registered",
+        purchaseCost,
+        purchasePrice: purchaseCost,
+        isReturn: !!purchase.isReturn,
         originalPurchase: {
           purchasedFrom: purchase.customerName || "",
           purchasedFromCnic: purchase.cnicNumber || "",
-          purchaseDate: purchase.purchaseDateTime || null
+          purchaseDate: purchase.purchaseDateTime || null,
+          purchaseCost
         }
       }
     });
@@ -112,27 +147,55 @@ const lookupBikeByEngine = async (req, res) => {
       .collection("purchases")
       .where("engineNo", "==", normalizedEngineNo)
       .where("sold", "==", false)
-      .limit(1)
       .get();
+
+    const activeUnsoldDocs = unsoldSnap.docs.filter((d) => !d.data().isDeleted);
 
     let purchaseDoc = null;
     let isSold = false;
 
-    if (!unsoldSnap.empty) {
-      purchaseDoc = unsoldSnap.docs[0];
+    if (activeUnsoldDocs.length > 0) {
+      activeUnsoldDocs.sort((a, b) => {
+        const tA = a.data().purchaseDateTime?.seconds || (a.data().createdAt ? new Date(a.data().createdAt).getTime() / 1000 : 0) || 0;
+        const tB = b.data().purchaseDateTime?.seconds || (b.data().createdAt ? new Date(b.data().createdAt).getTime() / 1000 : 0) || 0;
+        return tB - tA;
+      });
+      purchaseDoc = activeUnsoldDocs[0];
       isSold = false;
     } else {
       const anySnap = await db
         .collection("purchases")
         .where("engineNo", "==", normalizedEngineNo)
-        .limit(1)
         .get();
 
-      if (anySnap.empty) {
+      const activeAnyDocs = anySnap.docs.filter((d) => !d.data().isDeleted);
+
+      if (activeAnyDocs.length === 0) {
         return res.status(200).json({ success: true, found: false });
       }
-      purchaseDoc = anySnap.docs[0];
-      isSold = true;
+
+      // Check if there is a return purchase among them that was wrongly marked sold
+      const returnDoc = activeAnyDocs.find((d) => d.data().isReturn);
+      if (returnDoc) {
+        const soldSaleId = returnDoc.data().soldSaleId;
+        let isActuallySold = false;
+        if (soldSaleId) {
+          const sDoc = await db.collection("sales").doc(soldSaleId).get();
+          if (sDoc.exists && !sDoc.data().isReturned && !sDoc.data().isDeleted) {
+            isActuallySold = true;
+          }
+        }
+        if (!isActuallySold) {
+          purchaseDoc = returnDoc;
+          isSold = false;
+          db.collection("purchases").doc(returnDoc.id).update({ sold: false, soldSaleId: null, updatedAt: new Date() }).catch(() => {});
+        }
+      }
+
+      if (!purchaseDoc) {
+        purchaseDoc = activeAnyDocs[0];
+        isSold = true;
+      }
     }
 
     const purchase = purchaseDoc.data();
@@ -146,12 +209,15 @@ const lookupBikeByEngine = async (req, res) => {
       });
     }
 
+    const purchaseCost = parseFloat(purchase.actualAmount || 0) + parseFloat(purchase.additionalExpense || 0);
+
     return res.status(200).json({
       success: true,
       found: true,
       alreadySold: false,
       purchaseId: purchaseDoc.id,
       purchaseCategory: purchase.category || "local_customer",
+      purchaseCost,
       data: {
         bikeCompany: purchase.bikeCompany || "",
         bikeModel: purchase.bikeModel || "",
@@ -159,10 +225,14 @@ const lookupBikeByEngine = async (req, res) => {
         engineNo: purchase.engineNo || "",
         registrationNo: purchase.registrationNo || "",
         registrationStatus: purchase.registrationStatus || "registered",
+        purchaseCost,
+        purchasePrice: purchaseCost,
+        isReturn: !!purchase.isReturn,
         originalPurchase: {
           purchasedFrom: purchase.customerName || "",
           purchasedFromCnic: purchase.cnicNumber || "",
-          purchaseDate: purchase.purchaseDateTime || null
+          purchaseDate: purchase.purchaseDateTime || null,
+          purchaseCost
         }
       }
     });
@@ -303,29 +373,69 @@ const createSale = async (req, res) => {
 
     const { registrationNo: normalizedRegNo, registrationStatus } = normalizeRegistration(registrationNo);
 
-    // Check if the bike is available for sale (must have an active unsold purchase or be a valid new entry)
-    if (linkedPurchaseId) {
-      const pDoc = await db.collection("purchases").doc(linkedPurchaseId).get();
-      if (!pDoc.exists || pDoc.data().sold) {
-        return res.status(409).json({
-          success: false,
-          message: "This bike purchase record is already marked as sold."
-        });
+    let targetPurchaseId = linkedPurchaseId || null;
+    let targetPurchaseDoc = null;
+
+    if (targetPurchaseId) {
+      const pDoc = await db.collection("purchases").doc(targetPurchaseId).get();
+      if (pDoc.exists) {
+        // If it was marked sold to a sale that was later returned, it is available again
+        let isActuallySold = pDoc.data().sold;
+        if (isActuallySold && pDoc.data().soldSaleId) {
+          const sDoc = await db.collection("sales").doc(pDoc.data().soldSaleId).get();
+          if (sDoc.exists && (sDoc.data().isReturned || sDoc.data().isDeleted)) {
+            isActuallySold = false;
+          }
+        }
+        if (isActuallySold) {
+          return res.status(409).json({
+            success: false,
+            message: "This bike purchase record is already marked as sold."
+          });
+        }
+        targetPurchaseDoc = pDoc;
       }
-    } else if (registrationStatus === "registered") {
+    } else if (registrationStatus === "registered" && normalizedRegNo) {
       const unsoldSnap = await db
         .collection("purchases")
         .where("registrationNo", "==", normalizedRegNo)
         .where("sold", "==", false)
-        .limit(1)
         .get();
-      if (unsoldSnap.empty) {
+      const activeDocs = unsoldSnap.docs.filter(d => !d.data().isDeleted);
+
+      if (activeDocs.length > 0) {
+        // Pick latest (e.g. return purchase has latest date)
+        activeDocs.sort((a, b) => {
+          const tA = a.data().purchaseDateTime?.seconds || (a.data().createdAt ? new Date(a.data().createdAt).getTime() / 1000 : 0) || 0;
+          const tB = b.data().purchaseDateTime?.seconds || (b.data().createdAt ? new Date(b.data().createdAt).getTime() / 1000 : 0) || 0;
+          return tB - tA;
+        });
+        targetPurchaseDoc = activeDocs[0];
+        targetPurchaseId = targetPurchaseDoc.id;
+      } else {
         const anySnap = await db
           .collection("purchases")
           .where("registrationNo", "==", normalizedRegNo)
-          .limit(1)
           .get();
-        if (!anySnap.empty) {
+        const activeAny = anySnap.docs.filter(d => !d.data().isDeleted);
+        // Check if there is an unsold return purchase among them
+        const returnDoc = activeAny.find(d => d.data().isReturn);
+        if (returnDoc) {
+          const sId = returnDoc.data().soldSaleId;
+          let isActuallySold = false;
+          if (sId) {
+            const sDoc = await db.collection("sales").doc(sId).get();
+            if (sDoc.exists && !sDoc.data().isReturned && !sDoc.data().isDeleted) {
+              isActuallySold = true;
+            }
+          }
+          if (!isActuallySold) {
+            targetPurchaseDoc = returnDoc;
+            targetPurchaseId = returnDoc.id;
+          }
+        }
+
+        if (!targetPurchaseDoc && activeAny.length > 0) {
           return res.status(409).json({
             success: false,
             message: `This bike (${normalizedRegNo}) is already marked as sold. Record a Return / Buy Back purchase first.`
@@ -334,8 +444,36 @@ const createSale = async (req, res) => {
       }
     }
 
+    // Fallback search by chasis / engine if still unlinked
+    if (!targetPurchaseDoc && chasisNo && normalizeKey(chasisNo)) {
+      const pSnap = await db.collection("purchases").where("chasisNo", "==", chasisNo).where("sold", "==", false).get();
+      const active = pSnap.docs.filter(d => !d.data().isDeleted);
+      if (active.length > 0) {
+        targetPurchaseDoc = active[0];
+        targetPurchaseId = active[0].id;
+      }
+    }
+    if (!targetPurchaseDoc && engineNo && normalizeKey(engineNo)) {
+      const pSnap = await db.collection("purchases").where("engineNo", "==", engineNo).where("sold", "==", false).get();
+      const active = pSnap.docs.filter(d => !d.data().isDeleted);
+      if (active.length > 0) {
+        targetPurchaseDoc = active[0];
+        targetPurchaseId = active[0].id;
+      }
+    }
+
     const total = parseFloat(totalSaleAmount || 0);
     const advance = parseFloat(advanceReceived || 0);
+
+    let purchaseCost = 0;
+    if (targetPurchaseDoc) {
+      const pData = targetPurchaseDoc.data();
+      purchaseCost = parseFloat(pData.actualAmount || 0) + parseFloat(pData.additionalExpense || 0);
+    } else if (req.body.purchaseCost !== undefined && req.body.purchaseCost !== null && !isNaN(req.body.purchaseCost)) {
+      purchaseCost = parseFloat(req.body.purchaseCost || 0);
+    }
+
+    const profit = total - purchaseCost;
 
     let installments = [];
     let months = 0;
@@ -397,13 +535,16 @@ const createSale = async (req, res) => {
       salerAddress: salerAddress || "",
       salerPhotos: Array.isArray(salerPhotos) ? salerPhotos : [],
 
-      bikeCompany: bikeCompany || "",
-      bikeModel: bikeModel || "",
-      chasisNo: chasisNo || "",
-      engineNo: engineNo || "",
+      bikeCompany: bikeCompany || (targetPurchaseDoc?.data()?.bikeCompany || ""),
+      bikeModel: bikeModel || (targetPurchaseDoc?.data()?.bikeModel || ""),
+      chasisNo: chasisNo || (targetPurchaseDoc?.data()?.chasisNo || ""),
+      engineNo: engineNo || (targetPurchaseDoc?.data()?.engineNo || ""),
       registrationNo: normalizedRegNo,
       registrationStatus,
-      linkedPurchaseId: linkedPurchaseId || null,
+      linkedPurchaseId: targetPurchaseId || null,
+
+      purchaseCost: parseFloat(purchaseCost || 0),
+      profit: parseFloat(profit || 0),
 
       saleDateTime: saleDateTime ? new Date(saleDateTime) : new Date(),
       totalSaleAmount: total,
@@ -427,34 +568,13 @@ const createSale = async (req, res) => {
 
     const docRef = await db.collection("sales").add(saleData);
 
-    let targetPurchaseId = linkedPurchaseId;
-    if (!targetPurchaseId) {
-      if (registrationStatus === "registered" && normalizedRegNo) {
-        const pSnap = await db.collection("purchases").where("registrationNo", "==", normalizedRegNo).limit(1).get();
-        if (!pSnap.empty && !pSnap.docs[0].data().sold) targetPurchaseId = pSnap.docs[0].id;
-      }
-      if (!targetPurchaseId && chasisNo && normalizeKey(chasisNo)) {
-        const pSnap = await db.collection("purchases").where("chasisNo", "==", chasisNo).limit(1).get();
-        if (!pSnap.empty && !pSnap.docs[0].data().sold) targetPurchaseId = pSnap.docs[0].id;
-      }
-      if (!targetPurchaseId && engineNo && normalizeKey(engineNo)) {
-        const pSnap = await db.collection("purchases").where("engineNo", "==", engineNo).limit(1).get();
-        if (!pSnap.empty && !pSnap.docs[0].data().sold) targetPurchaseId = pSnap.docs[0].id;
-      }
-    }
-
-    // Mark the source purchase as sold, if this sale was linked to one.
+    // Mark the source purchase as sold and link this sale
     if (targetPurchaseId) {
       await db.collection("purchases").doc(targetPurchaseId).update({
         sold: true,
         soldSaleId: docRef.id,
         updatedAt: new Date()
       }).catch(() => {});
-
-      if (!linkedPurchaseId) {
-        await docRef.update({ linkedPurchaseId: targetPurchaseId }).catch(() => {});
-        saleData.linkedPurchaseId = targetPurchaseId;
-      }
     }
 
     return res.status(201).json({
@@ -682,27 +802,55 @@ const lookupBikeByRegistration = async (req, res) => {
       .collection("purchases")
       .where("registrationNo", "==", normalizedRegNo)
       .where("sold", "==", false)
-      .limit(1)
       .get();
+
+    const activeUnsoldDocs = unsoldSnap.docs.filter((d) => !d.data().isDeleted);
 
     let purchaseDoc = null;
     let isSold = false;
 
-    if (!unsoldSnap.empty) {
-      purchaseDoc = unsoldSnap.docs[0];
+    if (activeUnsoldDocs.length > 0) {
+      activeUnsoldDocs.sort((a, b) => {
+        const tA = a.data().purchaseDateTime?.seconds || (a.data().createdAt ? new Date(a.data().createdAt).getTime() / 1000 : 0) || 0;
+        const tB = b.data().purchaseDateTime?.seconds || (b.data().createdAt ? new Date(b.data().createdAt).getTime() / 1000 : 0) || 0;
+        return tB - tA;
+      });
+      purchaseDoc = activeUnsoldDocs[0];
       isSold = false;
     } else {
       const anySnap = await db
         .collection("purchases")
         .where("registrationNo", "==", normalizedRegNo)
-        .limit(1)
         .get();
 
-      if (anySnap.empty) {
+      const activeAnyDocs = anySnap.docs.filter((d) => !d.data().isDeleted);
+
+      if (activeAnyDocs.length === 0) {
         return res.status(200).json({ success: true, found: false });
       }
-      purchaseDoc = anySnap.docs[0];
-      isSold = true;
+
+      // Check if there is a return purchase among them that was wrongly marked sold
+      const returnDoc = activeAnyDocs.find((d) => d.data().isReturn);
+      if (returnDoc) {
+        const soldSaleId = returnDoc.data().soldSaleId;
+        let isActuallySold = false;
+        if (soldSaleId) {
+          const sDoc = await db.collection("sales").doc(soldSaleId).get();
+          if (sDoc.exists && !sDoc.data().isReturned && !sDoc.data().isDeleted) {
+            isActuallySold = true;
+          }
+        }
+        if (!isActuallySold) {
+          purchaseDoc = returnDoc;
+          isSold = false;
+          db.collection("purchases").doc(returnDoc.id).update({ sold: false, soldSaleId: null, updatedAt: new Date() }).catch(() => {});
+        }
+      }
+
+      if (!purchaseDoc) {
+        purchaseDoc = activeAnyDocs[0];
+        isSold = true;
+      }
     }
 
     const purchase = purchaseDoc.data();
@@ -716,12 +864,15 @@ const lookupBikeByRegistration = async (req, res) => {
       });
     }
 
+    const purchaseCost = parseFloat(purchase.actualAmount || 0) + parseFloat(purchase.additionalExpense || 0);
+
     return res.status(200).json({
       success: true,
       found: true,
       alreadySold: false,
       purchaseId: purchaseDoc.id,
       purchaseCategory: purchase.category || "local_customer",
+      purchaseCost,
       data: {
         bikeCompany: purchase.bikeCompany || "",
         bikeModel: purchase.bikeModel || "",
@@ -729,10 +880,14 @@ const lookupBikeByRegistration = async (req, res) => {
         engineNo: purchase.engineNo || "",
         registrationNo: purchase.registrationNo || "",
         registrationStatus: purchase.registrationStatus || "registered",
+        purchaseCost,
+        purchasePrice: purchaseCost,
+        isReturn: !!purchase.isReturn,
         originalPurchase: {
           purchasedFrom: purchase.customerName || "",
           purchasedFromCnic: purchase.cnicNumber || "",
-          purchaseDate: purchase.purchaseDateTime || null
+          purchaseDate: purchase.purchaseDateTime || null,
+          purchaseCost
         }
       }
     });
@@ -893,12 +1048,23 @@ const updateSale = async (req, res) => {
         }).catch(() => {});
       }
       if (updateData.linkedPurchaseId) {
+        const newPDoc = await db.collection("purchases").doc(updateData.linkedPurchaseId).get();
+        if (newPDoc.exists) {
+          const npd = newPDoc.data();
+          updateData.purchaseCost = parseFloat(npd.actualAmount || 0) + parseFloat(npd.additionalExpense || 0);
+        }
         await db.collection("purchases").doc(updateData.linkedPurchaseId).update({
           sold: true,
           soldSaleId: id,
           updatedAt: new Date()
         }).catch(() => {});
       }
+    }
+
+    if (updateData.totalSaleAmount !== undefined || updateData.purchaseCost !== undefined) {
+      const curTotal = updateData.totalSaleAmount !== undefined ? updateData.totalSaleAmount : (doc.data().totalSaleAmount || 0);
+      const curCost = updateData.purchaseCost !== undefined ? updateData.purchaseCost : (doc.data().purchaseCost || 0);
+      updateData.profit = parseFloat(curTotal) - parseFloat(curCost);
     }
 
     updateData.updatedAt = new Date();
