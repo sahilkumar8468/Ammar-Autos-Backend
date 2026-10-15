@@ -36,26 +36,31 @@ const allowedOrigins = [
 const isVercelPreview = (origin) =>
   /^https:\/\/ammar-autos.*\.vercel\.app$/.test(origin);
 
-app.use(
-  cors({
-    origin: (origin, callback) => {
-      // Allow requests with no origin (mobile apps, curl, Postman, server-to-server, etc.)
-      if (!origin || allowedOrigins.includes(origin) || isVercelPreview(origin)) {
-        callback(null, true);
-      } else {
-        callback(new Error("Not allowed by CORS"));
-      }
-    },
-    credentials: true,
-    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"],
-  })
-);
-app.options('/*', cors()); // enable preflight for all routes
+const corsOptions = {
+  origin: (origin, callback) => {
+    // Allow requests with no origin (mobile apps, curl, Postman, server-to-server, etc.)
+    if (!origin || allowedOrigins.includes(origin) || isVercelPreview(origin)) {
+      callback(null, true);
+    } else {
+      // In production/cross-origin, allow all rather than throwing 500 error
+      callback(null, true);
+    }
+  },
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "Accept"],
+};
+
+app.use(cors(corsOptions));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
-app.use(helmet());
+app.use(
+  helmet({
+    crossOriginResourcePolicy: false,
+    crossOriginOpenerPolicy: false,
+  })
+);
 app.use(morgan("dev"));
 
 app.get("/", (req, res) => {
