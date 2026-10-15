@@ -677,6 +677,21 @@ const getAllSales = async (req, res) => {
       );
     }
 
+    const { customerName, buyerName: queryBuyerName, engineNo: queryEngineNo, chasisNo: queryChasisNo } = req.query;
+    const targetBuyer = (queryBuyerName || customerName || "").trim().toLowerCase();
+    const targetEngine = (queryEngineNo || "").trim().toLowerCase();
+    const targetChasis = (queryChasisNo || "").trim().toLowerCase();
+
+    if (targetBuyer) {
+      sales = sales.filter(s => (s.buyerName || "").toLowerCase().includes(targetBuyer));
+    }
+    if (targetEngine) {
+      sales = sales.filter(s => (s.engineNo || "").toLowerCase().includes(targetEngine));
+    }
+    if (targetChasis) {
+      sales = sales.filter(s => (s.chasisNo || "").toLowerCase().includes(targetChasis));
+    }
+
     const totalCount = sales.length;
 
     let paged = sales;
